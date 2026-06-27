@@ -24,8 +24,8 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
       {/* Sidebar */}
       <aside style={{
         width: 'var(--sidebar-width)',
-        background: 'var(--bg-secondary)',
-        borderRight: '1px solid var(--border-color)',
+        background: 'var(--surface-dark)',
+        borderRight: '1px solid var(--hairline-strong)',
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
@@ -38,16 +38,17 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
           display: 'flex',
           alignItems: 'center',
           gap: '0.75rem',
-          borderBottom: '1px solid var(--border-color)'
+          borderBottom: '1px solid var(--hairline-strong)'
         }}>
-          <Workflow style={{ color: 'var(--accent-primary)', width: 28, height: 28 }} />
+          <Workflow style={{ color: 'var(--primary)', width: 28, height: 28 }} />
           <span style={{ 
-            fontFamily: 'var(--font-heading)', 
+            fontFamily: 'var(--font-sans)', 
             fontWeight: 800, 
             fontSize: '1.25rem',
-            letterSpacing: '-0.5px'
+            letterSpacing: '-0.5px',
+            color: '#ffffff'
           }}>
-            Social<span style={{ color: 'var(--accent-primary)' }}>Sell AI</span>
+            Social<span style={{ color: 'var(--primary)' }}>Sell AI</span>
           </span>
         </div>
 
@@ -67,12 +68,12 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
                   width: '100%',
                   padding: '0.85rem 1.25rem',
                   border: 'none',
-                  borderRadius: 'var(--radius-md)',
-                  background: isActive ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
-                  color: isActive ? '#fff' : 'var(--text-secondary)',
+                  borderRadius: 'var(--radius-sm)',
+                  background: isActive ? 'var(--primary)' : 'transparent',
+                  color: isActive ? 'var(--ink)' : 'var(--on-dark-mute)',
                   cursor: 'pointer',
                   fontSize: '0.95rem',
-                  fontWeight: isActive ? 600 : 500,
+                  fontWeight: isActive ? 700 : 500,
                   transition: 'all var(--transition-fast)',
                   textAlign: 'left'
                 }}
@@ -81,7 +82,7 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
                 <Icon style={{ 
                   width: 20, 
                   height: 20, 
-                  color: isActive ? 'var(--accent-primary)' : 'inherit',
+                  color: isActive ? 'var(--ink)' : 'inherit',
                   transition: 'color var(--transition-fast)'
                 }} />
                 {item.name}
@@ -93,11 +94,11 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
         {/* Footer info / Log out */}
         <div style={{
           padding: '1.5rem',
-          borderTop: '1px solid var(--border-color)',
+          borderTop: '1px solid var(--hairline-strong)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          color: 'var(--text-muted)'
+          color: 'var(--on-dark-mute)'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <div style={{
@@ -122,7 +123,7 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
       {/* Main Content Area */}
       <main style={{
         flex: 1,
-        background: 'var(--bg-primary)',
+        background: 'var(--canvas)',
         minHeight: '100vh',
         display: 'flex',
         flexDirection: 'column'
@@ -130,15 +131,14 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
         {/* Header */}
         <header style={{
           height: 'var(--header-height)',
-          borderBottom: '1px solid var(--border-color)',
+          borderBottom: '1px solid var(--hairline)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '0 2.5rem',
-          background: 'rgba(3, 7, 18, 0.4)',
-          backdropFilter: 'blur(8px)'
+          background: 'var(--canvas)'
         }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: 600 }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--ink)' }}>
             {menuItems.find(m => m.id === currentPage)?.name || 'Dashboard'}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
