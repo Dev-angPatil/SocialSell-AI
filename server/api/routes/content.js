@@ -1,100 +1,193 @@
 const express = require('express');
 const router = express.Router();
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const path = require('path');
+const { requireAuth } = require('../../middleware/auth');
+const { analyzeMediaAsset } = require('../../services/mediaAnalyzer');
+const supabase = require('../../config/supabase');
 
-// In-memory store for drafts
-const drafts = [];
+// Shared memory stores for local offline development
+global.mockPosts = global.mockPosts || [];
+global.mockAssets = global.mockAssets || [];
 
-// Initialize Gemini API if key is available
-const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+// Protect all content routes
+router.use(requireAuth);
 
-// POST /api/content/generate
-router.post('/generate', async (req, res) => {
-  const { brief, platform, businessProfile } = req.body;
-
-  if (!brief) {
-    return res.status(400).json({ error: "Missing brief" });
-  }
-
+// GET /api/content/queue - Get the post review queue
+router.get('/queue', async (req, res) => {
   try {
-    let caption = "";
-    let hashtags = "";
-    let cta = "";
-
-    if (!genAI) {
-      console.warn("⚠️ GEMINI_API_KEY not found. Using fallback mock generation.");
-      // Fallback mock generation if no API key
-      caption = `✨ Exciting news from ${businessProfile?.name || 'our shop'}! ✨\n\nLooking for the perfect addition to your style? ${brief}\n\nOur products are crafted with premium materials to fit your lifestyle. Grab yours now before stocks run out!`;
-      hashtags = "#style #fashion #shoplocal #sale #aesthetic";
-      cta = businessProfile?.cta_style || "DM us to order";
-    } else {
-      const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-
-      const prompt = `
-        You are SocialSell AI, a marketing expert.
-        Generate a high-converting, platform-native social media post for the platform: ${platform || 'Instagram'}.
-        
-        Business Profile:
-        - Name: ${businessProfile?.name || 'Our Brand'}
-        - Niche: ${businessProfile?.niche || 'General'}
-        - Products/Pricing: ${JSON.stringify(businessProfile?.products || [])}
-        - Tone of Voice: ${businessProfile?.tone || 'Friendly & Professional'}
-        - Target Audience: ${businessProfile?.target_audience || 'General Public'}
-        - Preferred Call To Action (CTA): ${businessProfile?.cta_style || 'Send a message'}
-        
-        Post Brief / Topic: "${brief}"
-        
-        Guidelines for ${platform || 'Instagram'}:
-        - Keep the tone matching the Brand's Tone of Voice.
-        - Format the output with spacing and emojis to make it highly engaging and readable.
-        - Ensure it has a strong hook in the first 1-2 lines.
-        - Integrate the Brand's preferred CTA naturally at the end.
-        
-        Provide your response in JSON format with exactly three fields:
-        {
-          "caption": "The main caption text",
-          "hashtags": "Space-separated hashtags tailored to the post and brand",
-          "cta": "The specific CTA used in the post"
-        }
-      `;
-
-      const result = await model.generateContent({
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json"
-        }
-      });
-
-      const responseText = result.response.text();
-      const parsed = JSON.parse(responseText);
-      caption = parsed.caption;
-      hashtags = parsed.hashtags;
-      cta = parsed.cta;
+    if (!supabase) {
+      const userPosts = global.mockPosts.filter(p => p.user_id === req.user.id);
+      return res.json(userPosts);
     }
 
-    const newDraft = {
-      id: Date.now().toString(),
-      brief,
-      platform: platform || 'Instagram',
-      caption,
-      hashtags,
-      cta,
-      createdAt: new Date(),
-      status: 'draft'
-    };
+    const { data, error } = await supabase
+      .from('posts')
+      .select('*')
+      .eq('user_id', req.user.id)
+      .order('created_at', { ascending: false });
 
-    drafts.unshift(newDraft);
-
-    res.json({ success: true, draft: newDraft });
-  } catch (error) {
-    console.error("Gemini Content Generation Error:", error);
-    res.status(500).json({ error: "Failed to generate content", details: error.message });
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('Fetch post queue error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/content/drafts
-router.get('/drafts', (req, res) => {
-  res.json(drafts);
+// POST /api/content/analyze-asset/:assetId - Analyze an uploaded asset and create a review draft
+router.post('/analyze-asset/:assetId', async (req, res) => {
+  const { assetId } = req.params;
+
+  try {
+    // 1. Fetch asset details
+    let asset;
+    if (!supabase) {
+      asset = global.mockAssets.find(a => a.id === assetId && a.user_id === req.user.id);
+    } else {
+      const { data, error } = await supabase
+        .from('assets')
+        .select('*')
+        .eq('id', assetId)
+        .eq('user_id', req.user.id)
+        .single();
+      
+      if (!error) asset = data;
+    }
+
+    if (!asset) {
+      return res.status(404).json({ error: 'Asset not found or unauthorized.' });
+    }
+
+    // 2. Fetch business profile details
+    let profile = null;
+    if (!supabase) {
+      // Import/fetch default mock profile
+      profile = {
+        company_name: 'Our Shop',
+        niche: 'Lifestyle products',
+        about: 'Premium eco-friendly essentials for daily life',
+        branding_guidelines: 'Energetic, modern, high quality'
+      };
+    } else {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', req.user.id)
+        .single();
+      
+      if (!error) profile = data;
+    }
+
+    // 3. Resolve local file path
+    const fileName = path.basename(asset.file_url);
+    const localFilePath = path.join(__dirname, '../../uploads', fileName);
+
+    // 4. Trigger Gemini Multimodal analysis
+    const analysis = await analyzeMediaAsset({
+      filePath: localFilePath,
+      mimeType: asset.file_type,
+      companyProfile: profile
+    });
+
+    // 5. Assemble draft post entry
+    const postData = {
+      id: `post-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+      user_id: req.user.id,
+      asset_id: asset.id,
+      platform: analysis.selected_platform,
+      caption: analysis.caption,
+      hashtags: analysis.hashtags,
+      cta: analysis.cta,
+      media_url: asset.file_url,
+      status: 'draft',
+      classification_reason: analysis.classification_reason,
+      created_at: new Date().toISOString()
+    };
+
+    if (!supabase) {
+      global.mockPosts.unshift(postData);
+      return res.status(201).json(postData);
+    }
+
+    // Insert to Supabase (Omit local ID so Postgres generates UUID)
+    const { id, ...supabaseInsertData } = postData;
+    const { data, error } = await supabase
+      .from('posts')
+      .insert([{
+        ...supabaseInsertData,
+        user_id: req.user.id
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json(data);
+
+  } catch (err) {
+    console.error('Analyze asset error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/content/drafts/:id - Update copy of a draft in the queue
+router.put('/drafts/:id', async (req, res) => {
+  const { id } = req.params;
+  const { caption, hashtags, cta, platform } = req.body;
+
+  try {
+    if (!supabase) {
+      const postIdx = global.mockPosts.findIndex(p => p.id === id && p.user_id === req.user.id);
+      if (postIdx === -1) return res.status(404).json({ error: 'Draft not found.' });
+
+      const updated = {
+        ...global.mockPosts[postIdx],
+        caption: caption !== undefined ? caption : global.mockPosts[postIdx].caption,
+        hashtags: hashtags !== undefined ? hashtags : global.mockPosts[postIdx].hashtags,
+        cta: cta !== undefined ? cta : global.mockPosts[postIdx].cta,
+        platform: platform !== undefined ? platform : global.mockPosts[postIdx].platform
+      };
+      global.mockPosts[postIdx] = updated;
+      return res.json(updated);
+    }
+
+    const { data, error } = await supabase
+      .from('posts')
+      .update({ caption, hashtags, cta, platform })
+      .eq('id', id)
+      .eq('user_id', req.user.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json(data);
+  } catch (err) {
+    console.error('Update draft error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/content/drafts/:id - Delete a draft
+router.delete('/drafts/:id', async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    if (!supabase) {
+      global.mockPosts = global.mockPosts.filter(p => !(p.id === id && p.user_id === req.user.id));
+      return res.json({ success: true, message: 'Draft deleted.' });
+    }
+
+    const { error } = await supabase
+      .from('posts')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', req.user.id);
+
+    if (error) throw error;
+    res.json({ success: true, message: 'Draft deleted.' });
+  } catch (err) {
+    console.error('Delete draft error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;

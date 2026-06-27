@@ -78,3 +78,43 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
+
+-- 7. Create Assets Table
+create table public.assets (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users on delete cascade not null,
+  filename text not null,
+  file_url text not null,
+  file_type text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now())
+);
+
+-- 8. Create Posts Table (Drafts Queue)
+create table public.posts (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users on delete cascade not null,
+  asset_id uuid references public.assets(id) on delete cascade,
+  platform text not null,
+  caption text not null,
+  hashtags text,
+  cta text,
+  media_url text,
+  status text not null default 'draft',
+  classification_reason text,
+  created_at timestamp with time zone default timezone('utc'::text, now())
+);
+
+-- 9. Enable RLS
+alter table public.assets enable row level security;
+alter table public.posts enable row level security;
+
+-- 10. RLS Policies for Assets
+create policy "Users can manage their own assets."
+  on public.assets for all
+  using ( auth.uid() = user_id );
+
+-- 11. RLS Policies for Posts
+create policy "Users can manage their own posts."
+  on public.posts for all
+  using ( auth.uid() = user_id );
+

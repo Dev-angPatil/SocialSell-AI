@@ -1,80 +1,186 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { Sparkles, Send, Calendar, Check, AlertCircle, TrendingUp, Link, RefreshCw } from 'lucide-react';
+import { 
+  Sparkles, 
+  Send, 
+  Calendar, 
+  Check, 
+  AlertCircle, 
+  TrendingUp, 
+  UploadCloud, 
+  FileText, 
+  Play, 
+  Trash2, 
+  Edit2, 
+  X, 
+  RefreshCw, 
+  Sliders 
+} from 'lucide-react';
 import { InstagramIcon, FacebookIcon, LinkedinIcon } from '../components/SocialIcons';
 
 export default function ContentGen() {
   const { authFetch, token } = useAuth();
   
-  // Basic states
-  const [brief, setBrief] = useState("");
-  const [platform, setPlatform] = useState("Instagram");
-  const [mediaUrl, setMediaUrl] = useState("https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800"); // Pre-filled premium asset
+  // Data states
+  const [assets, setAssets] = useState([]);
+  const [postQueue, setPostQueue] = useState([]);
   const [profile, setProfile] = useState(null);
-  const [trends, setTrends] = useState([]);
   
-  // UI States
-  const [generating, setGenerating] = useState(false);
-  const [publishing, setPublishing] = useState(false);
-  const [generatedDraft, setGeneratedDraft] = useState(null);
-  const [error, setError] = useState("");
-  
-  // Real-time SSE logs
+  // UI states
+  const [uploading, setUploading] = useState(false);
+  const [analyzingIds, setAnalyzingIds] = useState(new Set());
+  const [publishingId, setPublishId] = useState(null);
   const [publishLogs, setPublishLogs] = useState([]);
   const [statusMessage, setStatusMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  
+  // Inline editing states
+  const [editingPostId, setEditingPostId] = useState(null);
+  const [editCaption, setEditCaption] = useState("");
+  
+  const fileInputRef = useRef(null);
 
   useEffect(() => {
-    // Load profile
-    authFetch('/api/profile')
-      .then(res => res.json())
-      .then(data => setProfile(data))
-      .catch(err => console.error("Error loading profile context:", err));
-
-    // Load trends
-    authFetch('/api/trends/matched')
-      .then(res => res.json())
-      .then(data => setTrends(data))
-      .catch(err => console.error("Error loading trends:", err));
+    loadAllData();
   }, []);
 
-  const handleGenerate = async (e) => {
-    e.preventDefault();
-    if (!brief) return;
-
-    setGenerating(true);
-    setError("");
-    setGeneratedDraft(null);
-    setStatusMessage("");
-    setPublishLogs([]);
-
+  const loadAllData = async () => {
     try {
-      const res = await authFetch('/api/content/generate', {
-        method: 'POST',
-        body: JSON.stringify({ brief, platform, businessProfile: profile })
-      });
-      const data = await res.json();
-      if (data.error) {
-        setError(data.error);
-      } else {
-        setGeneratedDraft(data.draft);
+      // Load Profile
+      const profileRes = await authFetch('/api/profile');
+      if (profileRes.ok) {
+        const profileData = await profileRes.json();
+        setProfile(profileData);
+      }
+      
+      // Load Assets
+      const assetsRes = await authFetch('/api/assets');
+      if (assetsRes.ok) {
+        const assetsData = await assetsRes.json();
+        setAssets(assetsData);
+      }
+
+      // Load Posts/Drafts Queue
+      const queueRes = await authFetch('/api/content/queue');
+      if (queueRes.ok) {
+        const queueData = await queueRes.json();
+        setPostQueue(queueData);
       }
     } catch (err) {
-      console.error("Error generating content:", err);
-      setError("Failed to reach server generator.");
-    } finally {
-      setGenerating(false);
+      console.error("Load data error:", err);
+      setErrorMessage("Failed to refresh library and queue.");
     }
   };
 
-  const handlePublish = async () => {
-    if (!generatedDraft) return;
+  // 1. Handle file upload to backend
+  const handleFileUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
 
-    setPublishing(true);
+    setUploading(true);
+    setErrorMessage("");
+    
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/assets/upload', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        },
+        body: formData
+      });
+
+      if (!res.ok) throw new Error("Upload failed.");
+
+      const newAsset = await res.json();
+      setAssets(prev => [newAsset, ...prev]);
+
+      // Automatically trigger AI Analysis for the newly uploaded file!
+      await triggerAssetAnalysis(newAsset.id);
+
+    } catch (err) {
+      console.error(err);
+      setErrorMessage("Failed to upload file.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // 2. Trigger Gemini media analysis on an asset
+  const triggerAssetAnalysis = async (assetId) => {
+    setAnalyzingIds(prev => new Set([...prev, assetId]));
+    setErrorMessage("");
+
+    try {
+      const res = await authFetch(`/api/content/analyze-asset/${assetId}`, {
+        method: 'POST'
+      });
+
+      if (!res.ok) throw new Error("AI Analysis failed.");
+
+      const newDraft = await res.json();
+      setPostQueue(prev => [newDraft, ...prev]);
+      
+    } catch (err) {
+      console.error(err);
+      setErrorMessage("AI analysis failed to categorize media asset.");
+    } finally {
+      setAnalyzingIds(prev => {
+        const next = new Set(prev);
+        next.delete(assetId);
+        return next;
+      });
+    }
+  };
+
+  // 3. Edit Draft caption inline
+  const startEditDraft = (post) => {
+    setEditingPostId(post.id);
+    setEditCaption(post.caption);
+  };
+
+  const saveEditedDraft = async (postId) => {
+    try {
+      const res = await authFetch(`/api/content/drafts/${postId}`, {
+        method: 'PUT',
+        body: JSON.stringify({ caption: editCaption })
+      });
+
+      if (!res.ok) throw new Error("Update failed.");
+
+      const updatedPost = await res.json();
+      setPostQueue(prev => prev.map(p => p.id === postId ? updatedPost : p));
+      setEditingPostId(null);
+    } catch (err) {
+      console.error(err);
+      setErrorMessage("Failed to save changes.");
+    }
+  };
+
+  // 4. Delete Draft
+  const deleteDraft = async (postId) => {
+    try {
+      const res = await authFetch(`/api/content/drafts/${postId}`, {
+        method: 'DELETE'
+      });
+
+      if (res.ok) {
+        setPostQueue(prev => prev.filter(p => p.id !== postId));
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  // 5. One-Tap Publish with SSE progress logger
+  const handlePublish = async (post) => {
+    setPublishId(post.id);
     setStatusMessage("");
     setPublishLogs([]);
 
     try {
-      // Direct stream reader for Server-Sent Events (SSE)
       const response = await fetch('/api/publish', {
         method: 'POST',
         headers: {
@@ -82,9 +188,9 @@ export default function ContentGen() {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          caption: `${generatedDraft.caption}\n\n${generatedDraft.hashtags}`,
-          platform: generatedDraft.platform,
-          mediaUrl: mediaUrl
+          caption: post.caption + (post.hashtags ? `\n\n${post.hashtags}` : ""),
+          platform: post.platform,
+          mediaUrl: post.media_url
         })
       });
 
@@ -112,9 +218,9 @@ export default function ContentGen() {
                 
                 if (parsed.status === 'success') {
                   setStatusMessage(parsed.detail);
-                  setGeneratedDraft(prev => ({ ...prev, status: 'published' }));
+                  setPostQueue(prev => prev.map(p => p.id === post.id ? { ...p, status: 'published' } : p));
                 } else if (parsed.status === 'failed') {
-                  setError(parsed.detail);
+                  setErrorMessage(parsed.detail);
                 }
               } catch (e) {
                 console.warn("Parse chunk error:", e);
@@ -125,327 +231,387 @@ export default function ContentGen() {
       }
     } catch (err) {
       console.error("Publishing error:", err);
-      setError(err.message || "Failed to connect to publisher.");
+      setErrorMessage(err.message || "Failed to publish.");
     } finally {
-      setPublishing(false);
+      // Leave logs open for 3 seconds, then clean up
+      setTimeout(() => {
+        setPublishId(null);
+        setPublishLogs([]);
+      }, 4000);
     }
-  };
-
-  const handleApplyTrend = (trendBrief) => {
-    setBrief(trendBrief);
   };
 
   const getPlatformIcon = (plat) => {
     switch (plat) {
-      case 'Instagram': return <InstagramIcon style={{ width: 18, height: 18 }} />;
-      case 'Facebook': return <FacebookIcon style={{ width: 18, height: 18 }} />;
-      case 'LinkedIn': return <LinkedinIcon style={{ width: 18, height: 18 }} />;
-      default: return null;
+      case 'Instagram':
+      case 'Instagram Reels':
+        return <InstagramIcon style={{ width: 18, height: 18 }} />;
+      case 'Facebook':
+        return <FacebookIcon style={{ width: 18, height: 18 }} />;
+      case 'LinkedIn':
+        return <LinkedinIcon style={{ width: 18, height: 18 }} />;
+      default:
+        return null;
     }
   };
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '2.5rem', textAlign: 'left' }}>
       
-      {/* Column 1: Creation and logs */}
+      {/* Column 1: Review Queue & Sandbox */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
         
-        {/* Creator panel */}
-        <div className="glass-panel">
-          <div className="corner-square-decor"></div>
-          <h3 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700 }}>
-            <Sparkles style={{ color: 'var(--primary)', width: 20, height: 20 }} />
-            AI Content Generator
-          </h3>
-
-          <form onSubmit={handleGenerate}>
-            <div className="form-group">
-              <label className="form-label">Platform Channel</label>
-              <div style={{ display: 'flex', gap: '0.75rem' }}>
-                {['Instagram', 'Facebook', 'LinkedIn'].map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    onClick={() => setPlatform(p)}
-                    style={{
-                      flex: 1,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '0.5rem',
-                      padding: '0.75rem',
-                      borderRadius: 'var(--radius-sm)',
-                      background: platform === p ? 'var(--primary)' : 'rgba(255, 255, 255, 0.02)',
-                      border: platform === p ? '1px solid var(--primary)' : '1px solid var(--hairline)',
-                      color: platform === p ? 'var(--canvas)' : 'var(--body)',
-                      cursor: 'pointer',
-                      fontWeight: 700,
-                      transition: 'all var(--transition-fast)'
-                    }}
-                  >
-                    {getPlatformIcon(p)}
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">Attached Media URL (Required for Instagram)</label>
-              <div style={{ position: 'relative' }}>
-                <input
-                  type="text"
-                  className="form-input"
-                  placeholder="Paste public image/video URL (e.g. Unsplash link)..."
-                  value={mediaUrl}
-                  onChange={(e) => setMediaUrl(e.target.value)}
-                  style={{ paddingLeft: '2.5rem' }}
-                />
-                <Link style={{ position: 'absolute', left: '12px', top: '13px', width: 16, height: 16, color: 'var(--mute)' }} />
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label className="form-label">What should this post promote? (Brief / Prompt)</label>
-              <textarea
-                className="form-textarea"
-                placeholder="e.g. Highlight our new Canvas Tote Bag. Showcase that it fits a 15-inch laptop and is eco-friendly. Offer free shipping."
-                value={brief}
-                onChange={(e) => setBrief(e.target.value)}
-                required
-              />
-            </div>
-
-            {error && (
-              <div style={{ 
-                color: '#f87171', 
-                background: 'rgba(248, 113, 113, 0.1)', 
-                border: '1px solid rgba(248, 113, 113, 0.2)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '0.75rem',
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: '0.5rem', 
-                marginBottom: '1rem',
-                fontSize: '0.85rem'
-              }}>
-                <AlertCircle style={{ width: 16, height: 16, flexShrink: 0 }} />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <button 
-              type="submit" 
-              className="btn btn-primary" 
-              style={{ width: '100%', display: 'flex', gap: '0.5rem', justifyContent: 'center' }}
-              disabled={generating}
-            >
-              <Sparkles style={{ width: 18, height: 18 }} />
-              {generating ? "AI is generating post copy..." : "Generate Post Copy"}
-            </button>
-          </form>
-        </div>
-
-        {/* Generator Output Preview & Publishing Status Logs */}
-        {generatedDraft && (
-          <div className="glass-panel">
-            <div className="corner-square-decor"></div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700 }}>
-                📱 Live Post Preview ({generatedDraft.platform})
-              </h3>
-              <span className={`badge ${generatedDraft.status === 'published' ? 'badge-success' : 'badge-primary'}`}>
-                {generatedDraft.status === 'published' ? 'Published' : 'Draft'}
-              </span>
-            </div>
-
-            {/* Simulated Mobile Post Layout */}
-            <div style={{
-              background: 'rgba(3, 7, 18, 0.6)',
-              border: '1px solid var(--hairline)',
-              borderRadius: 'var(--radius-md)',
-              padding: '1.5rem',
-              color: '#fff',
-              marginBottom: '1.5rem'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-                <div style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: '50%',
-                  background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontWeight: 700,
-                  fontSize: '0.85rem',
-                  color: '#000'
-                }}>
-                  {profile?.company_name?.substring(0, 2).toUpperCase() || 'AI'}
-                </div>
-                <div>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: 700 }}>{profile?.company_name || 'My Brand'}</h4>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--mute)' }}>Optimal Time: Today at 6:30 PM</span>
-                </div>
-              </div>
-
-              {/* Show attached media thumbnail */}
-              {mediaUrl && (
-                <div style={{
-                  width: '100%',
-                  height: '200px',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundSize: 'cover',
-                  backgroundPosition: 'center',
-                  backgroundImage: `url(${mediaUrl})`,
-                  marginBottom: '1rem',
-                  border: '1px solid rgba(255,255,255,0.05)'
-                }} />
-              )}
-
-              <div style={{ 
-                fontSize: '0.925rem', 
-                lineHeight: '1.5', 
-                whiteSpace: 'pre-wrap', 
-                color: '#e5e7eb',
-                borderBottom: '1px solid var(--hairline)',
-                paddingBottom: '1rem',
-                marginBottom: '1rem',
-                textAlign: 'left'
-              }}>
-                {generatedDraft.caption}
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.9rem', textAlign: 'left' }}>
-                <span style={{ color: 'var(--primary)', fontWeight: 600 }}>🏷️ {generatedDraft.hashtags}</span>
-                <span style={{ color: 'var(--on-dark-mute)' }}>💬 CTA: {generatedDraft.cta}</span>
-              </div>
-            </div>
-
-            {/* Step-by-Step Publishing Stream Console */}
-            {publishLogs.length > 0 && (
-              <div style={{
-                background: '#000000',
-                border: '1px solid var(--hairline-strong)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '1rem',
-                fontFamily: 'monospace',
-                fontSize: '0.8rem',
-                color: '#34d399', // Green console text
-                marginBottom: '1.5rem',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '0.5rem',
-                textAlign: 'left'
-              }}>
-                <div style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', color: 'var(--mute)', display: 'flex', justifyContent: 'space-between' }}>
-                  <span>PUBLISHING STREAM CONSOLE</span>
-                  {publishing && <RefreshCw style={{ width: 12, height: 12, animation: 'spin 1.5s linear infinite' }} />}
-                </div>
-                {publishLogs.map((log, idx) => (
-                  <div key={idx} style={{ display: 'flex', gap: '0.5rem' }}>
-                    <span style={{ color: 'var(--primary)' }}>[{log.step}]</span>
-                    <span style={{ color: log.status === 'failed' ? '#f87171' : '#fff' }}>{log.detail}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {statusMessage && (
-              <div style={{ 
-                padding: '0.75rem', 
-                borderRadius: 'var(--radius-sm)', 
-                background: 'rgba(52, 211, 153, 0.1)',
-                border: '1px solid rgba(52, 211, 153, 0.3)',
-                color: '#34d399',
-                marginBottom: '1rem',
-                fontWeight: 600,
-                fontSize: '0.9rem'
-              }}>
-                {statusMessage}
-              </div>
-            )}
-
-            {generatedDraft.status !== 'published' && (
-              <div style={{ display: 'flex', gap: '1rem' }}>
-                <button 
-                  onClick={handlePublish} 
-                  className="btn btn-primary" 
-                  style={{ flex: 1 }}
-                  disabled={publishing}
-                >
-                  <Send style={{ width: 18, height: 18 }} />
-                  {publishing ? "Publishing..." : "One-Tap Publish Now"}
-                </button>
-                <button className="btn btn-secondary" style={{ display: 'flex', gap: '0.5rem' }}>
-                  <Calendar style={{ width: 18, height: 18 }} />
-                  Schedule Post
-                </button>
-              </div>
-            )}
+        {/* Error / Success Messages */}
+        {errorMessage && (
+          <div style={{
+            background: 'rgba(248, 113, 113, 0.1)',
+            border: '1px solid rgba(248, 113, 113, 0.2)',
+            color: '#f87171',
+            padding: '1rem',
+            borderRadius: 'var(--radius-sm)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem'
+          }}>
+            <AlertCircle style={{ flexShrink: 0 }} />
+            <span>{errorMessage}</span>
           </div>
         )}
-      </div>
 
-      {/* Column 2: Trends matched */}
-      <div className="glass-panel" style={{ height: 'fit-content' }}>
-        <div className="corner-square-decor"></div>
-        <h3 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, marginBottom: '1rem' }}>
-          <TrendingUp style={{ color: 'var(--primary)', width: 20, height: 20 }} />
-          Social Trend Matcher
-        </h3>
-        <p style={{ color: 'var(--body)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-          AI matched viral video structures for your niche this week. Click any to auto-fill the brief.
-        </p>
+        {statusMessage && (
+          <div style={{
+            background: 'rgba(52, 211, 153, 0.1)',
+            border: '1px solid rgba(52, 211, 153, 0.2)',
+            color: '#34d399',
+            padding: '1rem',
+            borderRadius: 'var(--radius-sm)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.75rem'
+          }}>
+            <Check style={{ flexShrink: 0 }} />
+            <span>{statusMessage}</span>
+          </div>
+        )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {trends.map((t) => (
-            <div
-              key={t.id}
-              onClick={() => handleApplyTrend(t.suggestedBrief)}
-              style={{
-                padding: '1rem',
-                borderRadius: 'var(--radius-sm)',
-                background: 'rgba(255, 255, 255, 0.01)',
-                border: '1px solid var(--hairline)',
-                cursor: 'pointer',
-                transition: 'all var(--transition-fast)'
-              }}
-              className="trend-card-hover"
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <span className="badge badge-primary" style={{ fontSize: '0.7rem' }}>{t.type}</span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--mute)' }}>🎵 {t.trendingAudio}</span>
-              </div>
-              <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff', marginBottom: '0.25rem' }}>{t.title}</h4>
-              <p style={{ fontSize: '0.8rem', color: 'var(--body)', marginBottom: '0.5rem' }}>{t.description}</p>
-              
-              <div style={{ 
-                fontSize: '0.8rem', 
-                background: 'rgba(3, 7, 18, 0.4)', 
-                padding: '0.5rem', 
-                borderRadius: 'var(--radius-xs)',
-                borderLeft: '2px solid var(--primary)',
-                color: 'var(--primary)'
-              }}>
-                <strong>Use brief:</strong> {t.suggestedBrief}
-              </div>
-            </div>
-          ))}
+        {/* Header Summary */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: 'var(--ink)' }}>Drafts & Review Queue</h2>
+            <p style={{ color: 'var(--body)', fontSize: '0.875rem' }}>Auto-sorted and custom-written by AI based on file characteristics.</p>
+          </div>
+          <button className="btn btn-secondary" onClick={loadAllData} style={{ display: 'flex', gap: '0.5rem', height: 38, padding: '0 1rem' }}>
+            <RefreshCw style={{ width: 14, height: 14 }} /> Refresh Queue
+          </button>
         </div>
 
-        <style>{`
-          .trend-card-hover:hover {
-            border-color: var(--primary) !important;
-            background: rgba(118, 185, 0, 0.02) !important;
-            transform: translateY(-1px);
-          }
-          @keyframes spin {
-            from { transform: rotate(0deg); }
-            to { transform: rotate(360deg); }
-          }
-        `}</style>
+        {/* Review Cards Queue */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+          {postQueue.length === 0 ? (
+            <div className="glass-panel" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--mute)' }}>
+              <FileText style={{ width: 48, height: 48, margin: '0 auto 1rem', strokeWidth: 1 }} />
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'var(--body)' }}>No drafts awaiting review</h3>
+              <p style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>Upload images or videos in the Media Library to kickstart auto-sorting and generation.</p>
+            </div>
+          ) : (
+            postQueue.map((post) => (
+              <div key={post.id} className="glass-panel" style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+                <div className="corner-square-decor"></div>
+                
+                {/* Header: Platform Classification */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                    <span className="badge badge-primary" style={{ display: 'flex', gap: '0.5rem', padding: '6px 12px', fontSize: '0.75rem' }}>
+                      {getPlatformIcon(post.platform)}
+                      {post.platform}
+                    </span>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--mute)' }}>
+                      Optimal: Today at 6:30 PM
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    {editingPostId !== post.id ? (
+                      <button className="btn btn-secondary" onClick={() => startEditDraft(post)} style={{ width: 34, height: 34, padding: 0 }}>
+                        <Edit2 style={{ width: 14, height: 14 }} />
+                      </button>
+                    ) : (
+                      <button className="btn btn-secondary" onClick={() => saveEditedDraft(post.id)} style={{ width: 34, height: 34, padding: 0, color: 'var(--primary)' }}>
+                        <Check style={{ width: 14, height: 14 }} />
+                      </button>
+                    )}
+                    <button className="btn btn-secondary" onClick={() => deleteDraft(post.id)} style={{ width: 34, height: 34, padding: 0, color: 'var(--error)' }}>
+                      <Trash2 style={{ width: 14, height: 14 }} />
+                    </button>
+                  </div>
+                </div>
+
+                {/* AI Rationale Alert Box */}
+                <div style={{ 
+                  background: 'rgba(118, 185, 0, 0.05)',
+                  border: '1px dashed rgba(118, 185, 0, 0.2)',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '0.75rem 1rem',
+                  fontSize: '0.8rem',
+                  color: 'var(--primary)',
+                  lineHeight: 1.4
+                }}>
+                  <strong>AI Sorting Choice:</strong> {post.classification_reason || "Analyzed for native audience interaction thresholds."}
+                </div>
+
+                {/* Content Panel (Split Preview & Copy) */}
+                <div style={{ display: 'grid', gridTemplateColumns: '160px 1fr', gap: '1.5rem' }}>
+                  {/* Media Thumbnail */}
+                  <div style={{
+                    width: '100%',
+                    height: '160px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundImage: `url(${post.media_url})`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    border: '1px solid var(--hairline)',
+                    position: 'relative',
+                    backgroundRepeat: 'no-repeat'
+                  }}>
+                    {post.platform.includes('Reels') && (
+                      <div style={{
+                        position: 'absolute',
+                        bottom: 8,
+                        right: 8,
+                        background: 'rgba(0,0,0,0.7)',
+                        borderRadius: '50%',
+                        width: 24,
+                        height: 24,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        <Play style={{ fill: '#fff', stroke: 'none', width: 10, height: 10, marginLeft: 2 }} />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Copy Area */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                    {editingPostId === post.id ? (
+                      <textarea
+                        className="form-textarea"
+                        style={{ minHeight: '110px', fontSize: '0.9rem' }}
+                        value={editCaption}
+                        onChange={(e) => setEditCaption(e.target.value)}
+                      />
+                    ) : (
+                      <div style={{ 
+                        fontSize: '0.925rem', 
+                        lineHeight: 1.5, 
+                        color: 'var(--ink)', 
+                        whiteSpace: 'pre-wrap' 
+                      }}>
+                        {post.caption}
+                      </div>
+                    )}
+
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.85rem' }}>
+                      {post.hashtags && <span style={{ color: 'var(--primary)', fontWeight: 600 }}>{post.hashtags}</span>}
+                      {post.cta && <span style={{ color: 'var(--mute)' }}>• CTA: {post.cta}</span>}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Real-time streaming logs (exclusive to the posting post) */}
+                {publishingId === post.id && publishLogs.length > 0 && (
+                  <div style={{
+                    background: '#000000',
+                    border: '1px solid var(--hairline-strong)',
+                    borderRadius: 'var(--radius-sm)',
+                    padding: '1rem',
+                    fontFamily: 'monospace',
+                    fontSize: '0.75rem',
+                    color: '#34d399',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '0.4rem',
+                    marginTop: '0.5rem'
+                  }}>
+                    <div style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', color: 'var(--mute)', display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
+                      <span>PUBLISHING SEQUENCE</span>
+                      <RefreshCw style={{ width: 12, height: 12, animation: 'spin 1.5s linear infinite' }} />
+                    </div>
+                    {publishLogs.map((log, idx) => (
+                      <div key={idx} style={{ display: 'flex', gap: '0.5rem' }}>
+                        <span style={{ color: 'var(--primary)' }}>[{log.step}]</span>
+                        <span style={{ color: log.status === 'failed' ? '#f87171' : '#fff' }}>{log.detail}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Footer Controls */}
+                {post.status !== 'published' && (
+                  <div style={{ display: 'flex', gap: '1rem', borderTop: '1px solid var(--hairline)', paddingTop: '1rem' }}>
+                    <button 
+                      className="btn btn-primary" 
+                      onClick={() => handlePublish(post)} 
+                      disabled={publishingId !== null}
+                      style={{ flex: 1 }}
+                    >
+                      <Send style={{ width: 16, height: 16 }} /> Publish Now
+                    </button>
+                    <button className="btn btn-secondary" style={{ display: 'flex', gap: '0.5rem' }}>
+                      <Calendar style={{ width: 16, height: 16 }} /> Schedule
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
       </div>
+
+      {/* Column 2: Upload Center & Library */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+        
+        {/* Upload Center */}
+        <div className="glass-panel">
+          <div className="corner-square-decor"></div>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '0.5rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <UploadCloud style={{ color: 'var(--primary)' }} /> Media Upload Center
+          </h3>
+          <p style={{ color: 'var(--body)', fontSize: '0.85rem', marginBottom: '1.5rem' }}>
+            Upload raw photos, Reels, or short videos. Gemini will automatically analyze file constraints, target channels, and schedule suggestions.
+          </p>
+
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+            accept="image/*,video/*"
+          />
+
+          <div 
+            onClick={() => fileInputRef.current?.click()}
+            style={{
+              border: '2px dashed var(--hairline-strong)',
+              borderRadius: 'var(--radius-md)',
+              padding: '2.5rem 1.5rem',
+              textAlign: 'center',
+              cursor: 'pointer',
+              background: 'rgba(255, 255, 255, 0.01)',
+              transition: 'border-color 0.2s ease, background 0.2s ease'
+            }}
+            className="upload-dropzone"
+          >
+            <UploadCloud style={{ width: 44, height: 44, color: 'var(--primary)', margin: '0 auto 1rem', opacity: 0.8 }} />
+            <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--ink)' }}>
+              {uploading ? "Uploading media file..." : "Drag & drop files here"}
+            </h4>
+            <p style={{ fontSize: '0.75rem', color: 'var(--mute)', marginTop: '0.25rem' }}>
+              Supports MP4, MOV, PNG, JPG (Max 50MB)
+            </p>
+          </div>
+        </div>
+
+        {/* Media Library Grid */}
+        <div className="glass-panel" style={{ flex: 1 }}>
+          <div className="corner-square-decor"></div>
+          <h3 style={{ fontSize: '1.25rem', fontWeight: 800, marginBottom: '1.25rem' }}>Media Assets Library</h3>
+          
+          {assets.length === 0 ? (
+            <p style={{ color: 'var(--mute)', fontSize: '0.85rem' }}>Your uploaded photos and videos will appear here.</p>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '1rem' }}>
+              {assets.map((asset) => {
+                const isAnalyzing = analyzingIds.has(asset.id);
+                const isVideo = asset.file_type.startsWith('video/');
+                
+                return (
+                  <div key={asset.id} className="glass-card" style={{ padding: 0, overflow: 'hidden', position: 'relative' }}>
+                    {/* Media Display */}
+                    <div style={{
+                      width: '100%',
+                      height: '110px',
+                      backgroundImage: `url(${asset.file_url})`,
+                      backgroundSize: 'cover',
+                      backgroundPosition: 'center',
+                      backgroundRepeat: 'no-repeat',
+                      position: 'relative'
+                    }}>
+                      {isVideo && (
+                        <div style={{
+                          position: 'absolute',
+                          top: 8,
+                          left: 8,
+                          background: 'rgba(0,0,0,0.6)',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontSize: '0.65rem',
+                          color: '#fff',
+                          fontWeight: 'bold'
+                        }}>
+                          VIDEO
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Meta & Actions */}
+                    <div style={{ padding: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <span style={{ 
+                        fontSize: '0.75rem', 
+                        color: 'var(--ink)', 
+                        whiteSpace: 'nowrap', 
+                        overflow: 'hidden', 
+                        textOverflow: 'ellipsis' 
+                      }}>
+                        {asset.filename}
+                      </span>
+                      
+                      <button 
+                        className="btn btn-secondary" 
+                        onClick={() => triggerAssetAnalysis(asset.id)}
+                        disabled={isAnalyzing}
+                        style={{ 
+                          width: '100%', 
+                          fontSize: '0.75rem', 
+                          height: '28px', 
+                          padding: '0 8px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '0.25rem'
+                        }}
+                      >
+                        {isAnalyzing ? (
+                          <>
+                            <RefreshCw style={{ width: 10, height: 10, animation: 'spin 1.5s linear infinite' }} />
+                            Analyzing...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles style={{ width: 10, height: 10 }} />
+                            Run AI Sort
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <style>{`
+        .upload-dropzone:hover {
+          border-color: var(--primary) !important;
+          background: rgba(118, 185, 0, 0.03) !important;
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
 
     </div>
   );

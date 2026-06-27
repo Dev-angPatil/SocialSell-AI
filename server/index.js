@@ -1,9 +1,20 @@
 const express = require('express');
 const cors = require('cors');
+const fs = require('fs');
+const path = require('path');
 require('dotenv').config();
+
+// Ensure uploads directory exists
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Serve uploads folder statically
+app.use('/uploads', express.static(uploadsDir));
 
 // Middleware
 app.use(cors({
@@ -21,6 +32,7 @@ app.get('/health', (req, res) => {
 // API Routes Boilerplate
 app.use('/api/auth', require('./api/routes/auth'));
 app.use('/api/profile', require('./api/routes/profile'));
+app.use('/api/assets', require('./api/routes/assets'));
 app.use('/api/content', require('./api/routes/content'));
 app.use('/api/trends', require('./api/routes/trends'));
 app.use('/api/schedule', require('./api/routes/schedule'));
