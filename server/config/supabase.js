@@ -12,8 +12,10 @@ if (!supabaseUrl) {
   console.error('❌ Missing SUPABASE_URL in environment variables.');
 }
 
+const isConfigured = (key) => key && key !== 'YOUR_SUPABASE_SERVICE_ROLE_KEY_HERE' && key !== 'YOUR_SUPABASE_ANON_KEY_HERE' && !key.startsWith('YOUR_');
+
 // 1. Service Client (Admin role, bypasses RLS)
-const supabase = (supabaseUrl && supabaseServiceKey) 
+const supabase = (supabaseUrl && isConfigured(supabaseServiceKey)) 
   ? createClient(supabaseUrl, supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
@@ -23,7 +25,7 @@ const supabase = (supabaseUrl && supabaseServiceKey)
   : null;
 
 // 2. Anon Client (Respects RLS, acts as guest/user)
-const supabaseAnon = (supabaseUrl && supabaseAnonKey)
+const supabaseAnon = (supabaseUrl && isConfigured(supabaseAnonKey))
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
 
