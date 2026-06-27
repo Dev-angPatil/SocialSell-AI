@@ -19,6 +19,7 @@ app.get('/health', (req, res) => {
 });
 
 // API Routes Boilerplate
+app.use('/api/auth', require('./api/routes/auth'));
 app.use('/api/profile', require('./api/routes/profile'));
 app.use('/api/content', require('./api/routes/content'));
 app.use('/api/trends', require('./api/routes/trends'));

@@ -1,13 +1,20 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
+import { AuthProvider, useAuth } from './context/AuthContext'
 import Layout from './components/Layout'
+import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Profile from './pages/Profile'
 import ContentGen from './pages/ContentGen'
 import SalesBot from './pages/SalesBot'
 import Calendar from './pages/Calendar'
 
-function App() {
+function MainAppContent() {
+  const { user } = useAuth();
   const [currentPage, setCurrentPage] = useState('dashboard');
+
+  if (!user) {
+    return <Login />;
+  }
 
   const renderPage = () => {
     switch (currentPage) {
@@ -30,6 +37,14 @@ function App() {
     <Layout currentPage={currentPage} setCurrentPage={setCurrentPage}>
       {renderPage()}
     </Layout>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <MainAppContent />
+    </AuthProvider>
   )
 }
 

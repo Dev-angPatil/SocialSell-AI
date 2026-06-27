@@ -1,0 +1,80 @@
+-- SUPABASE POSTGRESQL SCHEMA FOR SOCIALSELL AI
+
+-- 1. Create Profiles Table (links to Supabase auth.users)
+create table public.profiles (
+  id uuid references auth.users on delete cascade primary key,
+  company_name text,
+  niche text,
+  about text,
+  promote_type text default 'products',
+  promote_details text,
+  audience_type text default 'generic',
+  audience_details text,
+  region text,
+  social_links jsonb default '{}'::jsonb,
+  branding_guidelines text,
+  past_posts jsonb default '[]'::jsonb,
+  created_at timestamp with time zone default timezone('utc'::text, now()),
+  updated_at timestamp with time zone default timezone('utc'::text, now())
+);
+
+-- 2. Create Products Table (related to profiles)
+create table public.products (
+  id bigserial primary key,
+  profile_id uuid references public.profiles(id) on delete cascade not null,
+  name text not null,
+  price text,
+  description text,
+  created_at timestamp with time zone default timezone('utc'::text, now())
+);
+
+-- 3. Enable Row-Level Security (RLS) on both tables
+alter table public.profiles enable row level security;
+alter table public.products enable row level security;
+
+-- 4. Create RLS Policies for Profiles
+create policy "Users can view their own profile."
+  on public.profiles for select
+  using ( auth.uid() = id );
+
+create policy "Users can update their own profile."
+  on public.profiles for update
+  using ( auth.uid() = id );
+
+create policy "Users can insert their own profile."
+  on public.profiles for insert
+  with check ( auth.uid() = id );
+
+-- 5. Create RLS Policies for Products
+create policy "Users can view their own products."
+  on public.products for select
+  using ( auth.uid() = profile_id );
+
+create policy "Users can insert their own products."
+  on public.products for insert
+  with check ( auth.uid() = profile_id );
+
+create policy "Users can update their own products."
+  on public.products for update
+  using ( auth.uid() = profile_id );
+
+create policy "Users can delete their own products."
+  on public.products for delete
+  using ( auth.uid() = profile_id );
+
+-- 6. Set up a trigger to automatically create a public profile row when a user signs up
+create or replace function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.profiles (id, company_name)
+  values (new.id, split_part(new.email, '@', 1));
+  return new;
+end;
+$$ language plpgsql security definer;
+
+-- Remove the trigger if it already exists to avoid collisions
+drop trigger if exists on_auth_user_created on auth.users;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
