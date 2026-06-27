@@ -118,3 +118,23 @@ create policy "Users can manage their own posts."
   on public.posts for all
   using ( auth.uid() = user_id );
 
+-- 12. Create Intake Items Table
+create table public.intake_items (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users on delete cascade not null,
+  type text not null, -- 'media' or 'text'
+  sub_type text not null, -- 'deal', 'achievement', 'offer', 'announcement', 'media'
+  content text,
+  media_url text,
+  created_at timestamp with time zone default timezone('utc'::text, now())
+);
+
+-- 13. Enable RLS on Intake Items
+alter table public.intake_items enable row level security;
+
+-- 14. RLS Policies for Intake Items
+create policy "Users can manage their own intake items."
+  on public.intake_items for all
+  using ( auth.uid() = user_id );
+
+

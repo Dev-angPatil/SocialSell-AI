@@ -2,7 +2,8 @@ import React from 'react';
 import { 
   LayoutDashboard, 
   User, 
-  Sparkles, 
+  UploadCloud, 
+  FileText, 
   MessageSquare, 
   Calendar, 
   BarChart3,
@@ -13,8 +14,9 @@ import {
 export default function Layout({ children, currentPage, setCurrentPage }) {
   const menuItems = [
     { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
+    { id: 'intake', name: 'Intake Hub', icon: UploadCloud },
+    { id: 'queue', name: 'Review Queue', icon: FileText },
     { id: 'profile', name: 'Business Profile', icon: User },
-    { id: 'generator', name: 'AI Generator', icon: Sparkles },
     { id: 'bot', name: 'Sales Bot / Leads', icon: MessageSquare },
     { id: 'calendar', name: 'Content Calendar', icon: Calendar }
   ];

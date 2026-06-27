@@ -4,7 +4,8 @@ import Layout from './components/Layout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
 import Profile from './pages/Profile'
-import ContentGen from './pages/ContentGen'
+import IntakeHub from './pages/IntakeHub'
+import ReviewQueue from './pages/ReviewQueue'
 import SalesBot from './pages/SalesBot'
 import Calendar from './pages/Calendar'
 
@@ -22,8 +23,10 @@ function MainAppContent() {
         return <Dashboard />;
       case 'profile':
         return <Profile />;
-      case 'generator':
-        return <ContentGen />;
+      case 'intake':
+        return <IntakeHub />;
+      case 'queue':
+        return <ReviewQueue />;
       case 'bot':
         return <SalesBot />;
       case 'calendar':
