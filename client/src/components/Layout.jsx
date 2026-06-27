@@ -24,8 +24,10 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
       {/* Sidebar */}
       <aside style={{
         width: 'var(--sidebar-width)',
-        background: 'var(--surface-dark)',
-        borderRight: '1px solid var(--hairline-strong)',
+        background: 'rgba(3, 7, 18, 0.6)',
+        backdropFilter: 'blur(20px)',
+        WebkitBackdropFilter: 'blur(20px)',
+        borderRight: '1px solid var(--hairline)',
         display: 'flex',
         flexDirection: 'column',
         height: '100vh',
@@ -136,7 +138,9 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '0 2.5rem',
-          background: 'var(--canvas)'
+          background: 'rgba(3, 7, 18, 0.4)',
+          backdropFilter: 'blur(10px)',
+          WebkitBackdropFilter: 'blur(10px)'
         }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--ink)' }}>
             {menuItems.find(m => m.id === currentPage)?.name || 'Dashboard'}
