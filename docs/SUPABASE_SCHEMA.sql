@@ -137,4 +137,26 @@ create policy "Users can manage their own intake items."
   on public.intake_items for all
   using ( auth.uid() = user_id );
 
+-- 15. Create Integrations Table
+create table public.integrations (
+  id uuid default gen_random_uuid() primary key,
+  user_id uuid references auth.users on delete cascade not null,
+  platform text not null, -- 'instagram' | 'linkedin' | 'twitter'
+  account_name text not null,
+  access_token text not null,
+  platform_account_id text not null,
+  expires_at timestamp with time zone,
+  created_at timestamp with time zone default timezone('utc'::text, now()),
+  unique(user_id, platform)
+);
+
+-- 16. Enable RLS on Integrations
+alter table public.integrations enable row level security;
+
+-- 17. RLS Policies for Integrations
+create policy "Users can manage their own integrations."
+  on public.integrations for all
+  using ( auth.uid() = user_id );
+
+
 

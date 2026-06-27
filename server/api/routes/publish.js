@@ -4,6 +4,8 @@ const { publishToInstagram } = require('../../publishers/instagram');
 const { publishToLinkedIn } = require('../../publishers/linkedin');
 const { requireAuth } = require('../../middleware/auth');
 
+const supabase = require('../../config/supabase');
+
 // Apply requireAuth middleware to protect the publish endpoint
 router.use(requireAuth);
 
@@ -29,11 +31,46 @@ router.post('/', async (req, res) => {
     // 2. Fetch User Profile to check for social tokens
     sendProgress('Auth Verification', 'Checking session authorization...', 'in_progress');
     
-    // Retrieve credentials from Env (fallback to user details in DB in production)
-    const metaToken = process.env.META_ACCESS_TOKEN || null;
-    const metaAccountId = process.env.META_BUSINESS_ACCOUNT_ID || null;
-    const linkedinToken = process.env.LINKEDIN_ACCESS_TOKEN || null;
-    const linkedinPersonId = process.env.LINKEDIN_PERSON_ID || null;
+    // Default fallback to environment variables
+    let metaToken = process.env.META_ACCESS_TOKEN || null;
+    let metaAccountId = process.env.META_BUSINESS_ACCOUNT_ID || null;
+    let linkedinToken = process.env.LINKEDIN_ACCESS_TOKEN || null;
+    let linkedinPersonId = process.env.LINKEDIN_PERSON_ID || null;
+
+    // Load active OAuth integrations from database
+    if (!supabase) {
+      const integrations = (global.mockIntegrations || []).filter(i => i.user_id === req.user.id);
+      const ig = integrations.find(i => i.platform === 'instagram');
+      const li = integrations.find(i => i.platform === 'linkedin');
+      
+      if (ig) {
+        metaToken = ig.access_token;
+        metaAccountId = ig.platform_account_id;
+      }
+      if (li) {
+        linkedinToken = li.access_token;
+        linkedinPersonId = li.platform_account_id;
+      }
+    } else {
+      const { data: integrations, error } = await supabase
+        .from('integrations')
+        .select('*')
+        .eq('user_id', req.user.id);
+      
+      if (!error && integrations) {
+        const ig = integrations.find(i => i.platform === 'instagram');
+        const li = integrations.find(i => i.platform === 'linkedin');
+        
+        if (ig) {
+          metaToken = ig.access_token;
+          metaAccountId = ig.platform_account_id;
+        }
+        if (li) {
+          linkedinToken = li.access_token;
+          linkedinPersonId = li.platform_account_id;
+        }
+      }
+    }
 
     if (platform === 'Instagram') {
       sendProgress('Instagram Post Queue', 'Initializing Instagram publishing sequence...', 'in_progress');
