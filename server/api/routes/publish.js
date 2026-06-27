@@ -1,28 +1,72 @@
 const express = require('express');
 const router = express.Router();
+const { publishToInstagram } = require('../../publishers/instagram');
+const { publishToLinkedIn } = require('../../publishers/linkedin');
+const { requireAuth } = require('../../middleware/auth');
 
-// POST /api/publish
+// Apply requireAuth middleware to protect the publish endpoint
+router.use(requireAuth);
+
+// POST /api/publish - Publish post (Uses SSE/Streaming response for live progress logging)
 router.post('/', async (req, res) => {
   const { caption, platform, mediaUrl } = req.body;
 
-  if (!caption || !platform) {
-    return res.status(400).json({ error: "Missing caption or platform" });
+  if (!caption) {
+    return res.status(400).json({ error: "Missing caption" });
   }
 
-  try {
-    console.log(`Publishing to ${platform}:`, caption);
-    
-    // Simulate API call delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
+  // 1. Establish text/event-stream headers for real-time progress updates
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders(); // Establish connection immediately
 
-    res.json({
-      success: true,
-      message: `Successfully published to ${platform}!`,
-      postId: `mock_post_id_${Date.now()}`,
-      publishedAt: new Date()
-    });
+  const sendProgress = (step, detail, status = 'in_progress') => {
+    res.write(`data: ${JSON.stringify({ step, detail, status })}\n\n`);
+  };
+
+  try {
+    // 2. Fetch User Profile to check for social tokens
+    sendProgress('Auth Verification', 'Checking session authorization...', 'in_progress');
+    
+    // Retrieve credentials from Env (fallback to user details in DB in production)
+    const metaToken = process.env.META_ACCESS_TOKEN || null;
+    const metaAccountId = process.env.META_BUSINESS_ACCOUNT_ID || null;
+    const linkedinToken = process.env.LINKEDIN_ACCESS_TOKEN || null;
+    const linkedinPersonId = process.env.LINKEDIN_PERSON_ID || null;
+
+    if (platform === 'Instagram') {
+      sendProgress('Instagram Post Queue', 'Initializing Instagram publishing sequence...', 'in_progress');
+      
+      const result = await publishToInstagram({
+        caption,
+        mediaUrl,
+        accessToken: metaToken,
+        businessAccountId: metaAccountId,
+        onProgress: (detail) => sendProgress('Instagram Publishing', detail, 'in_progress')
+      });
+
+      sendProgress('Complete', `🎉 Success! Published to Instagram. Post ID: ${result.postId}`, 'success');
+    } else if (platform === 'LinkedIn') {
+      sendProgress('LinkedIn Post Queue', 'Initializing LinkedIn social share...', 'in_progress');
+
+      const result = await publishToLinkedIn({
+        caption,
+        accessToken: linkedinToken,
+        personId: linkedinPersonId,
+        onProgress: (detail) => sendProgress('LinkedIn Publishing', detail, 'in_progress')
+      });
+
+      sendProgress('Complete', `🎉 Success! Published to LinkedIn. Post URN ID: ${result.postId}`, 'success');
+    } else {
+      throw new Error(`Unsupported platform: ${platform}`);
+    }
+
   } catch (error) {
-    res.status(500).json({ error: "Failed to publish post", details: error.message });
+    console.error('Publish API router error:', error);
+    sendProgress('Error', `❌ Publishing Failed: ${error.message}`, 'failed');
+  } finally {
+    res.end(); // Close the streaming response
   }
 });
 

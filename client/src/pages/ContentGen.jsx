@@ -1,27 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Send, Calendar, Check, AlertCircle, TrendingUp } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { Sparkles, Send, Calendar, Check, AlertCircle, TrendingUp, Link, RefreshCw } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, LinkedinIcon } from '../components/SocialIcons';
 
 export default function ContentGen() {
+  const { authFetch, token } = useAuth();
+  
+  // Basic states
   const [brief, setBrief] = useState("");
   const [platform, setPlatform] = useState("Instagram");
+  const [mediaUrl, setMediaUrl] = useState("https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800"); // Pre-filled premium asset
   const [profile, setProfile] = useState(null);
   const [trends, setTrends] = useState([]);
+  
+  // UI States
   const [generating, setGenerating] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [generatedDraft, setGeneratedDraft] = useState(null);
   const [error, setError] = useState("");
+  
+  // Real-time SSE logs
+  const [publishLogs, setPublishLogs] = useState([]);
   const [statusMessage, setStatusMessage] = useState("");
 
   useEffect(() => {
     // Load profile
-    fetch('/api/profile')
+    authFetch('/api/profile')
       .then(res => res.json())
       .then(data => setProfile(data))
       .catch(err => console.error("Error loading profile context:", err));
 
     // Load trends
-    fetch('/api/trends/matched')
+    authFetch('/api/trends/matched')
       .then(res => res.json())
       .then(data => setTrends(data))
       .catch(err => console.error("Error loading trends:", err));
@@ -35,11 +45,11 @@ export default function ContentGen() {
     setError("");
     setGeneratedDraft(null);
     setStatusMessage("");
+    setPublishLogs([]);
 
     try {
-      const res = await fetch('/api/content/generate', {
+      const res = await authFetch('/api/content/generate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ brief, platform, businessProfile: profile })
       });
       const data = await res.json();
@@ -61,26 +71,61 @@ export default function ContentGen() {
 
     setPublishing(true);
     setStatusMessage("");
+    setPublishLogs([]);
 
     try {
-      const res = await fetch('/api/publish', {
+      // Direct stream reader for Server-Sent Events (SSE)
+      const response = await fetch('/api/publish', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify({
           caption: `${generatedDraft.caption}\n\n${generatedDraft.hashtags}`,
-          platform: generatedDraft.platform
+          platform: generatedDraft.platform,
+          mediaUrl: mediaUrl
         })
       });
-      const data = await res.json();
-      if (data.success) {
-        setStatusMessage(`✅ ${data.message}`);
-        setGeneratedDraft(prev => ({ ...prev, status: 'published' }));
-      } else {
-        setStatusMessage(`❌ Error: ${data.error}`);
+
+      if (!response.ok) {
+        throw new Error("Server error connecting to publisher");
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let done = false;
+      const logs = [];
+
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        done = readerDone;
+        if (value) {
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (line.trim().startsWith('data: ')) {
+              try {
+                const parsed = JSON.parse(line.substring(6));
+                logs.push(parsed);
+                setPublishLogs([...logs]);
+                
+                if (parsed.status === 'success') {
+                  setStatusMessage(parsed.detail);
+                  setGeneratedDraft(prev => ({ ...prev, status: 'published' }));
+                } else if (parsed.status === 'failed') {
+                  setError(parsed.detail);
+                }
+              } catch (e) {
+                console.warn("Parse chunk error:", e);
+              }
+            }
+          }
+        }
       }
     } catch (err) {
       console.error("Publishing error:", err);
-      setStatusMessage("❌ Failed to connect to publisher.");
+      setError(err.message || "Failed to connect to publisher.");
     } finally {
       setPublishing(false);
     }
@@ -100,16 +145,17 @@ export default function ContentGen() {
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '2rem', textAlign: 'left' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '2.5rem', textAlign: 'left' }}>
       
-      {/* Creation workspace */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+      {/* Column 1: Creation and logs */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
         
         {/* Creator panel */}
-        <div className="glass-panel" style={{ padding: '2rem' }}>
-          <h3 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-            <Sparkles style={{ color: 'var(--accent-primary)', width: 20, height: 20 }} />
-            Generate Post Copy
+        <div className="glass-panel">
+          <div className="corner-square-decor"></div>
+          <h3 style={{ fontSize: '1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700 }}>
+            <Sparkles style={{ color: 'var(--primary)', width: 20, height: 20 }} />
+            AI Content Generator
           </h3>
 
           <form onSubmit={handleGenerate}>
@@ -128,12 +174,12 @@ export default function ContentGen() {
                       justifyContent: 'center',
                       gap: '0.5rem',
                       padding: '0.75rem',
-                      borderRadius: 'var(--radius-md)',
-                      background: platform === p ? 'rgba(139, 92, 246, 0.15)' : 'rgba(255, 255, 255, 0.02)',
-                      border: platform === p ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
-                      color: platform === p ? '#fff' : 'var(--text-secondary)',
+                      borderRadius: 'var(--radius-sm)',
+                      background: platform === p ? 'var(--primary)' : 'rgba(255, 255, 255, 0.02)',
+                      border: platform === p ? '1px solid var(--primary)' : '1px solid var(--hairline)',
+                      color: platform === p ? 'var(--canvas)' : 'var(--body)',
                       cursor: 'pointer',
-                      fontWeight: 600,
+                      fontWeight: 700,
                       transition: 'all var(--transition-fast)'
                     }}
                   >
@@ -145,10 +191,25 @@ export default function ContentGen() {
             </div>
 
             <div className="form-group">
-              <label className="form-label">What is this post about? (Brief / Topic)</label>
+              <label className="form-label">Attached Media URL (Required for Instagram)</label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="Paste public image/video URL (e.g. Unsplash link)..."
+                  value={mediaUrl}
+                  onChange={(e) => setMediaUrl(e.target.value)}
+                  style={{ paddingLeft: '2.5rem' }}
+                />
+                <Link style={{ position: 'absolute', left: '12px', top: '13px', width: 16, height: 16, color: 'var(--mute)' }} />
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">What should this post promote? (Brief / Prompt)</label>
               <textarea
                 className="form-textarea"
-                placeholder="e.g. Promote our summer sale on handbags. Offer a 10% discount code."
+                placeholder="e.g. Highlight our new Canvas Tote Bag. Showcase that it fits a 15-inch laptop and is eco-friendly. Offer free shipping."
                 value={brief}
                 onChange={(e) => setBrief(e.target.value)}
                 required
@@ -156,8 +217,19 @@ export default function ContentGen() {
             </div>
 
             {error && (
-              <div style={{ color: '#f87171', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
-                <AlertCircle style={{ width: 16, height: 16 }} />
+              <div style={{ 
+                color: '#f87171', 
+                background: 'rgba(248, 113, 113, 0.1)', 
+                border: '1px solid rgba(248, 113, 113, 0.2)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '0.75rem',
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '0.5rem', 
+                marginBottom: '1rem',
+                fontSize: '0.85rem'
+              }}>
+                <AlertCircle style={{ width: 16, height: 16, flexShrink: 0 }} />
                 <span>{error}</span>
               </div>
             )}
@@ -169,16 +241,17 @@ export default function ContentGen() {
               disabled={generating}
             >
               <Sparkles style={{ width: 18, height: 18 }} />
-              {generating ? "AI is thinking..." : "Generate Post Copy"}
+              {generating ? "AI is generating post copy..." : "Generate Post Copy"}
             </button>
           </form>
         </div>
 
-        {/* Generator Output Preview */}
+        {/* Generator Output Preview & Publishing Status Logs */}
         {generatedDraft && (
-          <div className="glass-panel" style={{ padding: '2rem' }}>
+          <div className="glass-panel">
+            <div className="corner-square-decor"></div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-              <h3 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <h3 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700 }}>
                 📱 Live Post Preview ({generatedDraft.platform})
               </h3>
               <span className={`badge ${generatedDraft.status === 'published' ? 'badge-success' : 'badge-primary'}`}>
@@ -188,11 +261,10 @@ export default function ContentGen() {
 
             {/* Simulated Mobile Post Layout */}
             <div style={{
-              background: 'rgba(3, 7, 18, 0.4)',
-              border: '1px solid var(--border-color)',
-              borderRadius: 'var(--radius-lg)',
-              padding: '1.25rem',
-              fontFamily: 'var(--font-body)',
+              background: 'rgba(3, 7, 18, 0.6)',
+              border: '1px solid var(--hairline)',
+              borderRadius: 'var(--radius-md)',
+              padding: '1.5rem',
               color: '#fff',
               marginBottom: '1.5rem'
             }}>
@@ -201,48 +273,94 @@ export default function ContentGen() {
                   width: 36,
                   height: 36,
                   borderRadius: '50%',
-                  background: 'linear-gradient(135deg, var(--accent-primary), var(--accent-secondary))',
+                  background: 'linear-gradient(135deg, var(--primary), var(--primary-dark))',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   fontWeight: 700,
-                  fontSize: '0.85rem'
+                  fontSize: '0.85rem',
+                  color: '#000'
                 }}>
-                  {profile?.name?.substring(0, 2).toUpperCase() || 'AI'}
+                  {profile?.company_name?.substring(0, 2).toUpperCase() || 'AI'}
                 </div>
                 <div>
-                  <h4 style={{ fontSize: '0.9rem', fontWeight: 600 }}>{profile?.name || 'My Brand'}</h4>
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>AI-Suggested Optimal Time: Today at 6:30 PM</span>
+                  <h4 style={{ fontSize: '0.9rem', fontWeight: 700 }}>{profile?.company_name || 'My Brand'}</h4>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--mute)' }}>Optimal Time: Today at 6:30 PM</span>
                 </div>
               </div>
+
+              {/* Show attached media thumbnail */}
+              {mediaUrl && (
+                <div style={{
+                  width: '100%',
+                  height: '200px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundSize: 'cover',
+                  backgroundPosition: 'center',
+                  backgroundImage: `url(${mediaUrl})`,
+                  marginBottom: '1rem',
+                  border: '1px solid rgba(255,255,255,0.05)'
+                }} />
+              )}
 
               <div style={{ 
                 fontSize: '0.925rem', 
                 lineHeight: '1.5', 
                 whiteSpace: 'pre-wrap', 
                 color: '#e5e7eb',
-                borderBottom: '1px solid var(--border-color)',
+                borderBottom: '1px solid var(--hairline)',
                 paddingBottom: '1rem',
-                marginBottom: '1rem'
+                marginBottom: '1rem',
+                textAlign: 'left'
               }}>
                 {generatedDraft.caption}
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.9rem' }}>
-                <span style={{ color: 'var(--accent-secondary)', fontWeight: 600 }}>🏷️ {generatedDraft.hashtags}</span>
-                <span style={{ color: '#fff', fontWeight: 700 }}>💬 CTA: {generatedDraft.cta}</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.9rem', textAlign: 'left' }}>
+                <span style={{ color: 'var(--primary)', fontWeight: 600 }}>🏷️ {generatedDraft.hashtags}</span>
+                <span style={{ color: 'var(--on-dark-mute)' }}>💬 CTA: {generatedDraft.cta}</span>
               </div>
             </div>
+
+            {/* Step-by-Step Publishing Stream Console */}
+            {publishLogs.length > 0 && (
+              <div style={{
+                background: '#000000',
+                border: '1px solid var(--hairline-strong)',
+                borderRadius: 'var(--radius-sm)',
+                padding: '1rem',
+                fontFamily: 'monospace',
+                fontSize: '0.8rem',
+                color: '#34d399', // Green console text
+                marginBottom: '1.5rem',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '0.5rem',
+                textAlign: 'left'
+              }}>
+                <div style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', color: 'var(--mute)', display: 'flex', justifyContent: 'space-between' }}>
+                  <span>PUBLISHING STREAM CONSOLE</span>
+                  {publishing && <RefreshCw style={{ width: 12, height: 12, animation: 'spin 1.5s linear infinite' }} />}
+                </div>
+                {publishLogs.map((log, idx) => (
+                  <div key={idx} style={{ display: 'flex', gap: '0.5rem' }}>
+                    <span style={{ color: 'var(--primary)' }}>[{log.step}]</span>
+                    <span style={{ color: log.status === 'failed' ? '#f87171' : '#fff' }}>{log.detail}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {statusMessage && (
               <div style={{ 
                 padding: '0.75rem', 
                 borderRadius: 'var(--radius-sm)', 
-                background: 'rgba(255, 255, 255, 0.03)',
-                border: '1px solid var(--border-color)',
-                color: '#fff',
+                background: 'rgba(52, 211, 153, 0.1)',
+                border: '1px solid rgba(52, 211, 153, 0.3)',
+                color: '#34d399',
                 marginBottom: '1rem',
-                fontWeight: 500
+                fontWeight: 600,
+                fontSize: '0.9rem'
               }}>
                 {statusMessage}
               </div>
@@ -252,7 +370,7 @@ export default function ContentGen() {
               <div style={{ display: 'flex', gap: '1rem' }}>
                 <button 
                   onClick={handlePublish} 
-                  className="btn btn-accent" 
+                  className="btn btn-primary" 
                   style={{ flex: 1 }}
                   disabled={publishing}
                 >
@@ -269,14 +387,15 @@ export default function ContentGen() {
         )}
       </div>
 
-      {/* Trend Insights Drawer */}
-      <div className="glass-panel" style={{ padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.5rem', height: 'fit-content' }}>
-        <h3 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-          <TrendingUp style={{ color: 'var(--accent-secondary)', width: 20, height: 20 }} />
+      {/* Column 2: Trends matched */}
+      <div className="glass-panel" style={{ height: 'fit-content' }}>
+        <div className="corner-square-decor"></div>
+        <h3 style={{ fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 700, marginBottom: '1rem' }}>
+          <TrendingUp style={{ color: 'var(--primary)', width: 20, height: 20 }} />
           Social Trend Matcher
         </h3>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-          AI matched viral video structures for <strong>{profile?.niche || 'sustainable fashion'}</strong> this week. Click any to use as your creator brief.
+        <p style={{ color: 'var(--body)', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
+          AI matched viral video structures for your niche this week. Click any to auto-fill the brief.
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -286,28 +405,28 @@ export default function ContentGen() {
               onClick={() => handleApplyTrend(t.suggestedBrief)}
               style={{
                 padding: '1rem',
-                borderRadius: 'var(--radius-md)',
-                background: 'rgba(255, 255, 255, 0.02)',
-                border: '1px solid var(--border-color)',
+                borderRadius: 'var(--radius-sm)',
+                background: 'rgba(255, 255, 255, 0.01)',
+                border: '1px solid var(--hairline)',
                 cursor: 'pointer',
                 transition: 'all var(--transition-fast)'
               }}
               className="trend-card-hover"
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                <span className="badge badge-secondary" style={{ fontSize: '0.7rem' }}>{t.type}</span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>🎵 {t.trendingAudio}</span>
+                <span className="badge badge-primary" style={{ fontSize: '0.7rem' }}>{t.type}</span>
+                <span style={{ fontSize: '0.75rem', color: 'var(--mute)' }}>🎵 {t.trendingAudio}</span>
               </div>
-              <h4 style={{ fontSize: '0.95rem', fontWeight: 600, color: '#fff', marginBottom: '0.25rem' }}>{t.title}</h4>
-              <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>{t.description}</p>
+              <h4 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#fff', marginBottom: '0.25rem' }}>{t.title}</h4>
+              <p style={{ fontSize: '0.8rem', color: 'var(--body)', marginBottom: '0.5rem' }}>{t.description}</p>
               
               <div style={{ 
                 fontSize: '0.8rem', 
                 background: 'rgba(3, 7, 18, 0.4)', 
                 padding: '0.5rem', 
-                borderRadius: '6px',
-                borderLeft: '2px solid var(--accent-primary)',
-                color: 'var(--accent-primary-hover)'
+                borderRadius: 'var(--radius-xs)',
+                borderLeft: '2px solid var(--primary)',
+                color: 'var(--primary)'
               }}>
                 <strong>Use brief:</strong> {t.suggestedBrief}
               </div>
@@ -317,9 +436,13 @@ export default function ContentGen() {
 
         <style>{`
           .trend-card-hover:hover {
-            border-color: rgba(6, 182, 212, 0.4) !important;
-            background: rgba(6, 182, 212, 0.02) !important;
+            border-color: var(--primary) !important;
+            background: rgba(118, 185, 0, 0.02) !important;
             transform: translateY(-1px);
+          }
+          @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
           }
         `}</style>
       </div>
