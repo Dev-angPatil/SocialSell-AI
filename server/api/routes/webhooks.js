@@ -94,8 +94,11 @@ router.post('/', async (req, res) => {
 
 // AI processing engine helper
 async function processWebhookEvent(event) {
-  // Mock business profile for context
-  const mockProfile = {
+  const contactId = event.senderId || event.id;
+  const platform = event.platform;
+
+  // Default Mock profile parameters
+  let brandProfile = {
     name: "Mock Brand",
     niche: "Women's Fashion",
     products: [
@@ -106,22 +109,82 @@ async function processWebhookEvent(event) {
     cta_style: "DM us to order"
   };
 
+  let userId = 'mock-user-id-123';
+
   try {
+    // 1. Resolve owning userId & load actual database profile if Supabase is active
+    if (supabase) {
+      // First try to check if we have an existing lead to get the userId
+      const { data: existingLead } = await supabase
+        .from('leads')
+        .select('user_id')
+        .eq('contact_id', contactId)
+        .eq('platform', platform)
+        .limit(1)
+        .maybeSingle();
+
+      if (existingLead) {
+        userId = existingLead.user_id;
+      } else {
+        // Find owner via integration records
+        const { data: integration } = await supabase
+          .from('integrations')
+          .select('user_id')
+          .eq('platform', platform)
+          .limit(1)
+          .maybeSingle();
+        
+        if (integration) {
+          userId = integration.user_id;
+        }
+      }
+
+      // If we resolved a real user, pull their profile & catalog
+      if (userId && userId !== 'mock-user-id-123') {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .maybeSingle();
+
+        const { data: products } = await supabase
+          .from('products')
+          .select('*')
+          .eq('profile_id', userId);
+
+        if (profile) {
+          brandProfile = {
+            name: profile.company_name || "Our Shop",
+            niche: profile.niche || "Retail",
+            about: profile.about || "",
+            tone: profile.branding_guidelines || "Friendly & professional",
+            cta_style: profile.promote_type === 'products' ? 'Check our catalog' : 'Follow for updates',
+            products: products || []
+          };
+        }
+      }
+    }
+
     let replyText = "";
     let intent = "unrecognized";
 
     if (!genAI) {
       // Mock classifier when API key is missing
       const text = event.text.toLowerCase();
+      const firstProduct = brandProfile.products[0]?.name || "item";
+      const secondProduct = brandProfile.products[1]?.name || "accessories";
+      const firstPrice = brandProfile.products[0]?.price || "reasonable rates";
+      const secondPrice = brandProfile.products[1]?.price || "great discounts";
+
       if (text.includes('price') || text.includes('how much') || text.includes('₹') || text.includes('cost')) {
         intent = 'price_inquiry';
-        replyText = `Hey ${event.sender}! The Summer Sundress is ₹1,499 and the Canvas Tote Bag is ₹799. Would you like a checkout link? DM us to order!`;
+        replyText = `Hey ${event.sender}! The ${firstProduct} is ${firstPrice} and the ${secondProduct} is ${secondPrice}. Would you like a checkout link? DM us to order!`;
       } else if (text.includes('available') || text.includes('stock') || text.includes('buy')) {
         intent = 'buying_signal';
         replyText = `Hi ${event.sender}! Yes, it is fully in stock! You can purchase directly here: https://socialsell.ai/checkout/mock. Let us know if you need anything else!`;
       } else if (text.includes('where') || text.includes('location') || text.includes('store') || text.includes('city')) {
         intent = 'location';
-        replyText = `Hi ${event.sender}! We're online-only right now but ship across India. Visit socialsell.ai/shop to browse!`;
+        replyText = `Hi ${event.sender}! We're online-only right now but ship across our service regions. Visit our profile shop to browse!`;
       } else if (text.includes('size') || text.includes('material') || text.includes('color') || text.includes('delivery')) {
         intent = 'faq';
         replyText = `Thanks for reaching out, ${event.sender}! Let us know if you have any questions about our products or sizes. We are here to help!`;
@@ -133,21 +196,22 @@ async function processWebhookEvent(event) {
       const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
       
       const prompt = `
-        You are the AI Sales Bot for the business: ${mockProfile.name} (${mockProfile.niche}).
+        You are the AI Sales Bot for the business: ${brandProfile.name} (Niche: ${brandProfile.niche}).
         You are responding to an incoming customer ${event.type} on ${event.platform}.
         
         Business Context:
-        - Products/Services: ${JSON.stringify(mockProfile.products)}
-        - Brand Tone: ${mockProfile.tone}
-        - Preferred Call To Action (CTA): ${mockProfile.cta_style}
+        - About: ${brandProfile.about || 'E-commerce store'}
+        - Products/Services Catalog: ${JSON.stringify(brandProfile.products)}
+        - Brand Tone Guidelines: ${brandProfile.tone}
+        - Preferred Call To Action (CTA): ${brandProfile.cta_style}
         
         Customer Info:
-        - Sender: ${event.sender}
-        - Platform: ${event.platform}
+        - Sender Name: ${event.sender}
+        - Social Platform: ${event.platform}
         - Communication Type: ${event.type} (either comment or dm)
         - Incoming Message: "${event.text}"
         
-        Analyze the incoming message, classify the user's intent, and generate a natural, sales-focused response. Keep it friendly and concise (especially if it is a public comment).
+        Analyze the incoming message, classify the user's intent, and generate a natural, sales-focused response. Keep it friendly, responsive, and concise (especially if it is a public comment).
         
         Classify intent into one of:
         - "price_inquiry" (asking how much it costs)
@@ -177,11 +241,7 @@ async function processWebhookEvent(event) {
     console.log(`🤖 Bot response to ${event.sender} (Intent: ${intent}): "${replyText}"`);
 
     // ─── Create or Update Lead ────────────────────────────────────────────
-    await upsertLead(event, intent, replyText);
-    
-    // In a live app, we would make an API call to Meta to send this message:
-    // If comment: POST /v17.0/{comment-id}/replies
-    // If DM: POST /v17.0/me/messages
+    await upsertLead(event, intent, replyText, userId);
     
   } catch (error) {
     console.error('Error generating reply via Gemini:', error);
@@ -192,7 +252,7 @@ async function processWebhookEvent(event) {
  * Create a new lead or update an existing one for the same contact_id + platform.
  * Appends incoming message and bot response to the conversation array.
  */
-async function upsertLead(event, intent, replyText) {
+async function upsertLead(event, intent, replyText, resolvedUserId) {
   const contactId = event.senderId || event.id;
   const platform = event.platform;
   const now = new Date().toISOString();
@@ -217,10 +277,6 @@ async function upsertLead(event, intent, replyText) {
     }
 
     // 1. Check if a lead already exists for this contact_id + platform
-    //    We use the service-role client, so we need to filter by a known user.
-    //    In production the webhook would resolve the page/account owner's user_id
-    //    from the entry.id (page ID) → integrations table. For now we use a
-    //    simplified lookup.
     const { data: existingLeads, error: lookupError } = await supabase
       .from('leads')
       .select('*')
@@ -267,19 +323,7 @@ async function upsertLead(event, intent, replyText) {
       const conversation = [incomingEntry, botEntry];
       const score = calculateLeadScore(intent, conversation, event.text);
 
-      // Resolve the owning user_id from the page/account integration
-      // For now, we attempt to find which user owns this platform integration
-      let userId = null;
-      const { data: integration } = await supabase
-        .from('integrations')
-        .select('user_id')
-        .eq('platform', platform)
-        .limit(1)
-        .single();
-
-      if (integration) {
-        userId = integration.user_id;
-      }
+      const userId = resolvedUserId && resolvedUserId !== 'mock-user-id-123' ? resolvedUserId : null;
 
       if (!userId) {
         console.warn(`⚠️ Could not resolve user_id for platform ${platform}. Skipping lead creation.`);

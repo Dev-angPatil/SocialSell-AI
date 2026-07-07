@@ -10,7 +10,8 @@ import {
   Edit2, 
   RefreshCw, 
   SlidersHorizontal,
-  Play
+  Play,
+  Sparkles
 } from 'lucide-react';
 import { InstagramIcon, FacebookIcon, LinkedinIcon, TwitterIcon } from '../components/SocialIcons';
 
@@ -30,6 +31,13 @@ export default function ReviewQueue() {
   // Inline editing states
   const [editingPostId, setEditingPostId] = useState(null);
   const [editCaption, setEditCaption] = useState("");
+
+  // Scheduling states
+  const [schedulingPostId, setSchedulingPostId] = useState(null);
+  const [scheduledDate, setScheduledDate] = useState("");
+
+  // Variant states
+  const [generatingVariantId, setGeneratingVariantId] = useState(null);
 
   useEffect(() => {
     loadQueue();
@@ -92,6 +100,55 @@ export default function ReviewQueue() {
     } catch (err) {
       console.error(err);
       toast.error("Error", "Failed to delete draft.");
+    }
+  };
+
+  // Save Scheduled Post
+  const saveScheduledPost = async (postId) => {
+    if (!scheduledDate) {
+      toast.error("Required", "Please choose a valid date and time.");
+      return;
+    }
+
+    try {
+      const res = await authFetch(`/api/content/drafts/${postId}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          status: 'scheduled',
+          scheduled_at: new Date(scheduledDate).toISOString()
+        })
+      });
+
+      if (!res.ok) throw new Error("Scheduling failed.");
+
+      const updatedPost = await res.json();
+      setQueue(prev => prev.map(p => p.id === postId ? { ...p, status: 'scheduled', scheduled_at: updatedPost.scheduled_at } : p));
+      setSchedulingPostId(null);
+      toast.success("Post Scheduled", `This post is queued to publish on ${new Date(scheduledDate).toLocaleString()}`);
+    } catch (err) {
+      console.error(err);
+      toast.error("Error", "Failed to schedule post.");
+    }
+  };
+
+  // Generate A/B Variant
+  const generatePostVariant = async (postId) => {
+    setGeneratingVariantId(postId);
+    try {
+      const res = await authFetch(`/api/content/drafts/${postId}/variant`, {
+        method: 'POST'
+      });
+
+      if (!res.ok) throw new Error("A/B variant generation failed.");
+
+      const newVariant = await res.json();
+      setQueue(prev => [newVariant, ...prev]);
+      toast.success("Variant Created", "Variant B successfully added to your queue!");
+    } catch (err) {
+      console.error(err);
+      toast.error("Generation Failed", "Could not generate alternative caption.");
+    } finally {
+      setGeneratingVariantId(null);
     }
   };
 
@@ -249,6 +306,27 @@ export default function ReviewQueue() {
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  {post.status !== 'published' && (
+                    <button 
+                      className="btn btn-secondary" 
+                      onClick={() => generatePostVariant(post.id)} 
+                      disabled={generatingVariantId !== null}
+                      style={{ 
+                        width: 34, 
+                        height: 34, 
+                        padding: 0, 
+                        color: 'var(--primary)',
+                        position: 'relative'
+                      }}
+                      title="Generate A/B Variant"
+                    >
+                      <Sparkles style={{ 
+                        width: 14, 
+                        height: 14,
+                        animation: generatingVariantId === post.id ? 'spin 1.5s linear infinite' : 'none'
+                      }} />
+                    </button>
+                  )}
                   {editingPostId !== post.id ? (
                     <button className="btn btn-secondary" onClick={() => startEditDraft(post)} style={{ width: 34, height: 34, padding: 0 }}>
                       <Edit2 style={{ width: 14, height: 14 }} />
@@ -372,19 +450,111 @@ export default function ReviewQueue() {
               )}
 
               {/* Action Buttons */}
-              {post.status !== 'published' && (
-                <div style={{ display: 'flex', gap: '1rem', borderTop: '1px solid var(--hairline)', paddingTop: '1rem' }}>
-                  <button 
-                    className="btn btn-primary" 
-                    onClick={() => handlePublish(post)} 
-                    disabled={publishingId !== null}
-                    style={{ flex: 1 }}
-                  >
-                    <Send style={{ width: 16, height: 16 }} /> Publish Now
-                  </button>
-                  <button className="btn btn-secondary" style={{ display: 'flex', gap: '0.5rem' }}>
-                    <Calendar style={{ width: 16, height: 16 }} /> Schedule Post
-                  </button>
+              {post.status !== 'published' && post.status !== 'scheduled' && (
+                <div style={{ borderTop: '1px solid var(--hairline)', paddingTop: '1rem' }}>
+                  {schedulingPostId === post.id ? (
+                    <div style={{ 
+                      background: 'rgba(255,255,255,0.01)', 
+                      border: '1px solid var(--hairline-strong)',
+                      padding: '1rem', 
+                      borderRadius: 'var(--radius-sm)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '0.75rem',
+                      alignItems: 'stretch'
+                    }}>
+                      <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--body)' }}>
+                        Choose Scheduling Date & Time:
+                      </div>
+                      <input 
+                        type="datetime-local" 
+                        className="form-input" 
+                        value={scheduledDate}
+                        onChange={(e) => setScheduledDate(e.target.value)}
+                        style={{ 
+                          width: '100%',
+                          background: 'rgba(0,0,0,0.2)',
+                          color: '#fff',
+                          border: '1px solid var(--hairline-strong)',
+                          padding: '8px 12px',
+                          borderRadius: 'var(--radius-xs)',
+                          fontSize: '0.9rem'
+                        }}
+                      />
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button 
+                          className="btn btn-primary" 
+                          onClick={() => saveScheduledPost(post.id)}
+                          style={{ flex: 1, padding: '8px 16px' }}
+                        >
+                          Confirm Schedule
+                        </button>
+                        <button 
+                          className="btn btn-secondary" 
+                          onClick={() => setSchedulingPostId(null)}
+                          style={{ padding: '8px 16px' }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '1rem' }}>
+                      <button 
+                        className="btn btn-primary" 
+                        onClick={() => handlePublish(post)} 
+                        disabled={publishingId !== null || generatingVariantId !== null}
+                        style={{ flex: 1 }}
+                      >
+                        <Send style={{ width: 16, height: 16 }} /> Publish Now
+                      </button>
+                      <button 
+                        className="btn btn-secondary" 
+                        onClick={() => {
+                          setSchedulingPostId(post.id);
+                          // Default value: tomorrow at this same time
+                          const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+                          tomorrow.setMinutes(tomorrow.getMinutes() - tomorrow.getTimezoneOffset());
+                          setScheduledDate(tomorrow.toISOString().slice(0, 16));
+                        }}
+                        disabled={publishingId !== null || generatingVariantId !== null}
+                        style={{ display: 'flex', gap: '0.5rem' }}
+                      >
+                        <Calendar style={{ width: 16, height: 16 }} /> Schedule Post
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {post.status === 'scheduled' && post.scheduled_at && (
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '0.5rem', 
+                  fontSize: '0.8rem', 
+                  color: 'var(--mute)', 
+                  borderTop: '1px solid var(--hairline)', 
+                  paddingTop: '0.75rem',
+                  marginTop: '0.5rem'
+                }}>
+                  <Calendar style={{ width: 14, height: 14, color: 'var(--primary)' }} />
+                  <span>Scheduled for <strong>{new Date(post.scheduled_at).toLocaleString()}</strong></span>
+                  <span className="badge" style={{ marginLeft: 'auto', background: 'rgba(255,255,255,0.05)', color: 'var(--body)' }}>Scheduled</span>
+                </div>
+              )}
+              {post.status === 'published' && (
+                <div style={{ 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '0.5rem', 
+                  fontSize: '0.8rem', 
+                  color: '#34d399', 
+                  borderTop: '1px solid var(--hairline)', 
+                  paddingTop: '0.75rem',
+                  marginTop: '0.5rem'
+                }}>
+                  <Check style={{ width: 14, height: 14 }} />
+                  <span>Published on social timeline</span>
                 </div>
               )}
             </div>

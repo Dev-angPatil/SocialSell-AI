@@ -58,6 +58,8 @@ app.use('/api/analytics', require('./api/routes/analytics'));
 app.use('/api/leads', require('./api/routes/leads'));
 app.use('/webhooks/meta', require('./api/routes/webhooks'));
 
+const { startScheduler } = require('./scheduler/scheduler');
+
 // Global Error Handler
 app.use((err, req, res, next) => {
   console.error(err.stack);
@@ -71,4 +73,11 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, () => {
   console.log(`🚀 SocialSell AI Server running on port ${PORT}`);
+  
+  // Initialize scheduled posts background engine
+  try {
+    startScheduler();
+  } catch (err) {
+    console.error('Failed to start background scheduler:', err);
+  }
 });
