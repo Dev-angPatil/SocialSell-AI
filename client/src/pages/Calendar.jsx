@@ -1,20 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar as CalendarIcon, Clock, ChevronLeft, ChevronRight, Plus, Eye, Check } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 
 export default function Calendar() {
+  const { authFetch } = useAuth();
+  const toast = useToast();
   const [schedule, setSchedule] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeDate, setActiveDate] = useState(new Date());
 
   useEffect(() => {
-    fetch('/api/schedule')
-      .then(res => res.json())
+    authFetch('/api/schedule')
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to load schedule.");
+        return res.json();
+      })
       .then(data => {
         setSchedule(data);
         setLoading(false);
       })
       .catch(err => {
         console.error("Error loading calendar schedule:", err);
+        toast.error("Error", "Could not load calendar schedule.");
         setLoading(false);
       });
   }, []);

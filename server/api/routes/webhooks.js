@@ -1,8 +1,21 @@
 const express = require('express');
 const router = express.Router();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { supabase } = require('../../config/supabase');
+const { calculateLeadScore } = require('./leads');
 
 const genAI = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+
+// ─── Lead Score Mappings (shared with leads.js via calculateLeadScore) ───────
+
+const INTENT_BASE_SCORES = {
+  buying_signal: 90,
+  price_inquiry: 70,
+  availability: 60,
+  location: 40,
+  faq: 20,
+  unrecognized: 10
+};
 
 // GET /webhooks/meta (Webhook verification for Meta)
 router.get('/', (req, res) => {
@@ -43,10 +56,11 @@ router.post('/', async (req, res) => {
               console.log(`💬 New comment from ${comment.from.username || comment.from.name}: "${comment.text}"`);
               
               await processWebhookEvent({
-                platform: body.object === 'instagram' ? 'Instagram' : 'Facebook',
+                platform: body.object === 'instagram' ? 'instagram' : 'facebook',
                 type: 'comment',
-                id: comment.id,
+                id: comment.from.id || comment.id,
                 sender: comment.from.username || comment.from.name,
+                senderId: comment.from.id,
                 text: comment.text,
                 postId: comment.post_id || entry.id
               });
@@ -61,10 +75,11 @@ router.post('/', async (req, res) => {
               console.log(`✉️ New DM from user ${messageEvent.sender.id}: "${message.text}"`);
               
               await processWebhookEvent({
-                platform: body.object === 'instagram' ? 'Instagram' : 'Facebook',
+                platform: body.object === 'instagram' ? 'instagram' : 'facebook',
                 type: 'dm',
                 id: messageEvent.sender.id,
                 sender: `User_${messageEvent.sender.id.substring(0, 6)}`,
+                senderId: messageEvent.sender.id,
                 text: message.text
               });
             }
@@ -93,7 +108,7 @@ async function processWebhookEvent(event) {
 
   try {
     let replyText = "";
-    let intent = "unknown";
+    let intent = "unrecognized";
 
     if (!genAI) {
       // Mock classifier when API key is missing
@@ -104,9 +119,15 @@ async function processWebhookEvent(event) {
       } else if (text.includes('available') || text.includes('stock') || text.includes('buy')) {
         intent = 'buying_signal';
         replyText = `Hi ${event.sender}! Yes, it is fully in stock! You can purchase directly here: https://socialsell.ai/checkout/mock. Let us know if you need anything else!`;
-      } else {
+      } else if (text.includes('where') || text.includes('location') || text.includes('store') || text.includes('city')) {
+        intent = 'location';
+        replyText = `Hi ${event.sender}! We're online-only right now but ship across India. Visit socialsell.ai/shop to browse!`;
+      } else if (text.includes('size') || text.includes('material') || text.includes('color') || text.includes('delivery')) {
         intent = 'faq';
         replyText = `Thanks for reaching out, ${event.sender}! Let us know if you have any questions about our products or sizes. We are here to help!`;
+      } else {
+        intent = 'unrecognized';
+        replyText = `Thanks for reaching out, ${event.sender}! Check out our collection and let us know if anything catches your eye!`;
       }
     } else {
       const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
@@ -132,8 +153,9 @@ async function processWebhookEvent(event) {
         - "price_inquiry" (asking how much it costs)
         - "availability" (asking if it is in stock or ships to their location)
         - "buying_signal" (expressing strong intent to purchase)
+        - "location" (asking about physical store or delivery area)
         - "faq" (asking details about sizing, material, delivery, etc.)
-        - "unknown" (other chat, casual greetings)
+        - "unrecognized" (other chat, casual greetings)
         
         Provide the response in JSON format:
         {
@@ -153,6 +175,9 @@ async function processWebhookEvent(event) {
     }
 
     console.log(`🤖 Bot response to ${event.sender} (Intent: ${intent}): "${replyText}"`);
+
+    // ─── Create or Update Lead ────────────────────────────────────────────
+    await upsertLead(event, intent, replyText);
     
     // In a live app, we would make an API call to Meta to send this message:
     // If comment: POST /v17.0/{comment-id}/replies
@@ -160,6 +185,129 @@ async function processWebhookEvent(event) {
     
   } catch (error) {
     console.error('Error generating reply via Gemini:', error);
+  }
+}
+
+/**
+ * Create a new lead or update an existing one for the same contact_id + platform.
+ * Appends incoming message and bot response to the conversation array.
+ */
+async function upsertLead(event, intent, replyText) {
+  const contactId = event.senderId || event.id;
+  const platform = event.platform;
+  const now = new Date().toISOString();
+
+  const incomingEntry = {
+    role: 'customer',
+    message: event.text,
+    timestamp: now
+  };
+
+  const botEntry = {
+    role: 'bot',
+    message: replyText,
+    timestamp: now
+  };
+
+  try {
+    if (!supabase) {
+      // ── Mock fallback: log and skip DB operations ──
+      console.log(`📋 [Mock] Lead upsert for ${event.sender} (${contactId}) on ${platform} — intent: ${intent}`);
+      return;
+    }
+
+    // 1. Check if a lead already exists for this contact_id + platform
+    //    We use the service-role client, so we need to filter by a known user.
+    //    In production the webhook would resolve the page/account owner's user_id
+    //    from the entry.id (page ID) → integrations table. For now we use a
+    //    simplified lookup.
+    const { data: existingLeads, error: lookupError } = await supabase
+      .from('leads')
+      .select('*')
+      .eq('contact_id', contactId)
+      .eq('platform', platform)
+      .limit(1);
+
+    if (lookupError) {
+      console.error('Lead lookup error:', lookupError);
+      return;
+    }
+
+    if (existingLeads && existingLeads.length > 0) {
+      // ── Update existing lead ──────────────────────────────────────────
+      const existing = existingLeads[0];
+      const updatedConversation = [...(existing.conversation || []), incomingEntry, botEntry];
+
+      // Re-score with new context
+      const newScore = calculateLeadScore(intent, updatedConversation, event.text);
+
+      // Upgrade intent if the new one has a higher base score
+      const currentIntentScore = INTENT_BASE_SCORES[existing.intent] || 0;
+      const newIntentScore = INTENT_BASE_SCORES[intent] || 0;
+      const resolvedIntent = newIntentScore > currentIntentScore ? intent : existing.intent;
+
+      const { error: updateError } = await supabase
+        .from('leads')
+        .update({
+          intent: resolvedIntent,
+          score: newScore,
+          conversation: updatedConversation,
+          contact_name: event.sender || existing.contact_name,
+          contact_handle: event.sender ? `@${event.sender}` : existing.contact_handle
+        })
+        .eq('id', existing.id);
+
+      if (updateError) {
+        console.error('Lead update error:', updateError);
+      } else {
+        console.log(`📋 Lead updated for ${event.sender} (score: ${newScore}, intent: ${resolvedIntent})`);
+      }
+    } else {
+      // ── Create new lead ───────────────────────────────────────────────
+      const conversation = [incomingEntry, botEntry];
+      const score = calculateLeadScore(intent, conversation, event.text);
+
+      // Resolve the owning user_id from the page/account integration
+      // For now, we attempt to find which user owns this platform integration
+      let userId = null;
+      const { data: integration } = await supabase
+        .from('integrations')
+        .select('user_id')
+        .eq('platform', platform)
+        .limit(1)
+        .single();
+
+      if (integration) {
+        userId = integration.user_id;
+      }
+
+      if (!userId) {
+        console.warn(`⚠️ Could not resolve user_id for platform ${platform}. Skipping lead creation.`);
+        return;
+      }
+
+      const { error: insertError } = await supabase
+        .from('leads')
+        .insert({
+          user_id: userId,
+          platform,
+          contact_name: event.sender,
+          contact_handle: `@${event.sender}`,
+          contact_id: contactId,
+          intent,
+          score,
+          status: 'new',
+          conversation
+        });
+
+      if (insertError) {
+        console.error('Lead creation error:', insertError);
+      } else {
+        console.log(`📋 New lead created for ${event.sender} (score: ${score}, intent: ${intent})`);
+      }
+    }
+  } catch (err) {
+    console.error('Lead upsert error:', err);
   }
 }
 

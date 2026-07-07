@@ -101,6 +101,7 @@ create table public.posts (
   media_url text,
   status text not null default 'draft',
   classification_reason text,
+  scheduled_at timestamp with time zone,
   created_at timestamp with time zone default timezone('utc'::text, now())
 );
 

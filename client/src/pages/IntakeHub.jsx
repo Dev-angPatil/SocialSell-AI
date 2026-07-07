@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { 
   UploadCloud, 
   FileText, 
@@ -15,6 +16,7 @@ import {
 
 export default function IntakeHub() {
   const { authFetch, token } = useAuth();
+  const toast = useToast();
   
   // Data State
   const [intakeItems, setIntakeItems] = useState([]);
@@ -26,8 +28,6 @@ export default function IntakeHub() {
   // UI States
   const [uploading, setUploading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
   
   const fileInputRef = useRef(null);
 
@@ -44,7 +44,7 @@ export default function IntakeHub() {
       }
     } catch (err) {
       console.error(err);
-      setErrorMessage("Failed to load Sandbox intake items.");
+      toast.error("Error", "Failed to load Sandbox intake items.");
     }
   };
 
@@ -54,8 +54,6 @@ export default function IntakeHub() {
     if (!announcementText.trim()) return;
 
     setSubmitting(true);
-    setErrorMessage("");
-    setStatusMessage("");
 
     try {
       const res = await authFetch('/api/intake', {
@@ -69,13 +67,13 @@ export default function IntakeHub() {
       if (!res.ok) throw new Error("Failed to register announcement.");
 
       const data = await res.json();
-      setStatusMessage(`✅ Update registered! AI drafted ${data.generatedDraftCount} posts in your Review Queue.`);
+      toast.success("Update Registered", `AI drafted ${data.generatedDraftCount} posts in your Review Queue.`);
       setAnnouncementText("");
       loadIntakeItems();
 
     } catch (err) {
       console.error(err);
-      setErrorMessage("Failed to process announcement.");
+      toast.error("Submission Failed", "Failed to process announcement.");
     } finally {
       setSubmitting(false);
     }
@@ -87,8 +85,6 @@ export default function IntakeHub() {
     if (!file) return;
 
     setUploading(true);
-    setErrorMessage("");
-    setStatusMessage("");
 
     const formData = new FormData();
     formData.append('file', file);
@@ -106,7 +102,7 @@ export default function IntakeHub() {
       if (!res.ok) throw new Error("Upload failed.");
 
       const asset = await res.json();
-      setStatusMessage("✅ File uploaded successfully. Triggering AI analyzer...");
+      toast.info("Upload Successful", "File uploaded. Triggering AI analyzer...");
 
       // 2. Trigger Gemini Analysis automatically on background
       const analysisRes = await authFetch(`/api/content/analyze-asset/${asset.id}`, {
@@ -114,16 +110,16 @@ export default function IntakeHub() {
       });
 
       if (analysisRes.ok) {
-        setStatusMessage("✅ Asset uploaded and analyzed! Draft suggestions added to Review Queue.");
+        toast.success("Analysis Complete", "Asset analyzed! Draft suggestions added to Review Queue.");
       } else {
-        setErrorMessage("Upload complete, but AI analysis failed to categorize.");
+        toast.warning("Analysis Failed", "Upload complete, but AI analysis failed to categorize.");
       }
       
       loadIntakeItems();
 
     } catch (err) {
       console.error(err);
-      setErrorMessage("Failed to upload media asset.");
+      toast.error("Upload Failed", "Failed to upload media asset.");
     } finally {
       setUploading(false);
     }
@@ -150,33 +146,6 @@ export default function IntakeHub() {
       
       {/* Column 1: Intake Channels (Uploads & Forms) */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-        
-        {/* Status / Error Alerts */}
-        {errorMessage && (
-          <div style={{
-            background: 'rgba(248, 113, 113, 0.1)',
-            border: '1px solid rgba(248, 113, 113, 0.2)',
-            color: '#f87171',
-            padding: '1rem',
-            borderRadius: 'var(--radius-sm)',
-            fontSize: '0.9rem'
-          }}>
-            {errorMessage}
-          </div>
-        )}
-
-        {statusMessage && (
-          <div style={{
-            background: 'rgba(52, 211, 153, 0.1)',
-            border: '1px solid rgba(52, 211, 153, 0.2)',
-            color: '#34d399',
-            padding: '1rem',
-            borderRadius: 'var(--radius-sm)',
-            fontSize: '0.9rem'
-          }}>
-            {statusMessage}
-          </div>
-        )}
 
         {/* Brand Media Intake */}
         <div className="glass-panel">

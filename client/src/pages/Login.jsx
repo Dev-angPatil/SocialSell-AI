@@ -1,15 +1,22 @@
 import React, { useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { Workflow } from 'lucide-react';
 
 export default function Login() {
-  const { login, signup } = useAuth();
+  const { login, signup, user } = useAuth();
+  const navigate = useNavigate();
   const [isRegister, setIsRegister] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState('');
+
+  // If already logged in, redirect to dashboard
+  if (user) {
+    return <Navigate to="/" replace />;
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -24,6 +31,7 @@ export default function Login() {
         setIsRegister(false);
       } else {
         await login(email, password);
+        navigate('/');
       }
     } catch (err) {
       console.error(err);

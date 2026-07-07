@@ -1,4 +1,6 @@
 import React from 'react';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { 
   LayoutDashboard, 
   User, 
@@ -11,15 +13,24 @@ import {
   Workflow
 } from 'lucide-react';
 
-export default function Layout({ children, currentPage, setCurrentPage }) {
+export default function Layout() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { logout } = useAuth();
+
   const menuItems = [
-    { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
-    { id: 'intake', name: 'Intake Hub', icon: UploadCloud },
-    { id: 'queue', name: 'Review Queue', icon: FileText },
-    { id: 'profile', name: 'Business Profile', icon: User },
-    { id: 'bot', name: 'Sales Bot / Leads', icon: MessageSquare },
-    { id: 'calendar', name: 'Content Calendar', icon: Calendar }
+    { path: '/', name: 'Dashboard', icon: LayoutDashboard },
+    { path: '/intake', name: 'Intake Hub', icon: UploadCloud },
+    { path: '/queue', name: 'Review Queue', icon: FileText },
+    { path: '/profile', name: 'Business Profile', icon: User },
+    { path: '/bot', name: 'Sales Bot / Leads', icon: MessageSquare },
+    { path: '/calendar', name: 'Content Calendar', icon: Calendar }
   ];
+
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login');
+  };
 
   return (
     <div className="app-container">
@@ -60,11 +71,11 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
         <nav style={{ padding: '1.5rem 1rem', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {menuItems.map((item) => {
             const Icon = item.icon;
-            const isActive = currentPage === item.id;
+            const isActive = location.pathname === item.path;
             return (
               <button
-                key={item.id}
-                onClick={() => setCurrentPage(item.id)}
+                key={item.path}
+                onClick={() => navigate(item.path)}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -113,12 +124,15 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
             }}></div>
             <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>Live Syncing</span>
           </div>
-          <button style={{
-            background: 'none',
-            border: 'none',
-            color: 'inherit',
-            cursor: 'pointer'
-          }}>
+          <button
+            onClick={handleLogout}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'inherit',
+              cursor: 'pointer'
+            }}
+          >
             <LogOut style={{ width: 18, height: 18 }} />
           </button>
         </div>
@@ -145,7 +159,7 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
           WebkitBackdropFilter: 'blur(10px)'
         }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--ink)' }}>
-            {menuItems.find(m => m.id === currentPage)?.name || 'Dashboard'}
+            {menuItems.find(m => m.path === location.pathname)?.name || 'Dashboard'}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
             <span className="badge badge-primary">FlowZint Hackathon 2026</span>
@@ -154,7 +168,7 @@ export default function Layout({ children, currentPage, setCurrentPage }) {
 
         {/* Body */}
         <div style={{ padding: '2.5rem', flex: 1, overflowY: 'auto' }}>
-          {children}
+          <Outlet />
         </div>
       </main>
 

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { 
   Send, 
   Calendar, 
@@ -15,6 +16,7 @@ import { InstagramIcon, FacebookIcon, LinkedinIcon, TwitterIcon } from '../compo
 
 export default function ReviewQueue() {
   const { authFetch, token } = useAuth();
+  const toast = useToast();
   
   // Queue state
   const [queue, setQueue] = useState([]);
@@ -24,8 +26,6 @@ export default function ReviewQueue() {
   const [loading, setLoading] = useState(false);
   const [publishingId, setPublishId] = useState(null);
   const [publishLogs, setPublishLogs] = useState([]);
-  const [statusMessage, setStatusMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
   
   // Inline editing states
   const [editingPostId, setEditingPostId] = useState(null);
@@ -37,7 +37,6 @@ export default function ReviewQueue() {
 
   const loadQueue = async () => {
     setLoading(true);
-    setErrorMessage("");
     try {
       const res = await authFetch('/api/content/queue');
       if (res.ok) {
@@ -48,7 +47,7 @@ export default function ReviewQueue() {
       }
     } catch (err) {
       console.error(err);
-      setErrorMessage("Could not load Review Queue.");
+      toast.error("Error", "Could not load Review Queue.");
     } finally {
       setLoading(false);
     }
@@ -72,9 +71,10 @@ export default function ReviewQueue() {
       const updatedPost = await res.json();
       setQueue(prev => prev.map(p => p.id === postId ? updatedPost : p));
       setEditingPostId(null);
+      toast.success("Draft Saved", "Successfully updated caption.");
     } catch (err) {
       console.error(err);
-      setErrorMessage("Failed to save changes.");
+      toast.error("Error", "Failed to save changes.");
     }
   };
 
@@ -87,18 +87,18 @@ export default function ReviewQueue() {
 
       if (res.ok) {
         setQueue(prev => prev.filter(p => p.id !== postId));
+        toast.success("Deleted", "Draft removed from queue.");
       }
     } catch (err) {
       console.error(err);
+      toast.error("Error", "Failed to delete draft.");
     }
   };
 
   // SSE Publishing Sequence
   const handlePublish = async (post) => {
     setPublishId(post.id);
-    setStatusMessage("");
     setPublishLogs([]);
-    setErrorMessage("");
 
     try {
       const response = await fetch('/api/publish', {
@@ -137,10 +137,10 @@ export default function ReviewQueue() {
                 setPublishLogs([...logs]);
                 
                 if (parsed.status === 'success') {
-                  setStatusMessage(parsed.detail);
+                  toast.success("Published", parsed.detail);
                   setQueue(prev => prev.map(p => p.id === post.id ? { ...p, status: 'published' } : p));
                 } else if (parsed.status === 'failed') {
-                  setErrorMessage(parsed.detail);
+                  toast.error("Publishing Failed", parsed.detail);
                 }
               } catch (e) {
                 console.warn("Parse chunk error:", e);
@@ -151,7 +151,7 @@ export default function ReviewQueue() {
       }
     } catch (err) {
       console.error("Publishing error:", err);
-      setErrorMessage(err.message || "Failed to publish.");
+      toast.error("Publishing Error", err.message || "Failed to publish.");
     } finally {
       setTimeout(() => {
         setPublishId(null);
@@ -184,33 +184,6 @@ export default function ReviewQueue() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', textAlign: 'left', maxWidth: '1000px', margin: '0 auto' }}>
-      
-      {/* Messages */}
-      {errorMessage && (
-        <div style={{
-          background: 'rgba(248, 113, 113, 0.1)',
-          border: '1px solid rgba(248, 113, 113, 0.2)',
-          color: '#f87171',
-          padding: '1rem',
-          borderRadius: 'var(--radius-sm)',
-          fontSize: '0.9rem'
-        }}>
-          {errorMessage}
-        </div>
-      )}
-
-      {statusMessage && (
-        <div style={{
-          background: 'rgba(52, 211, 153, 0.1)',
-          border: '1px solid rgba(52, 211, 153, 0.2)',
-          color: '#34d399',
-          padding: '1rem',
-          borderRadius: 'var(--radius-sm)',
-          fontSize: '0.9rem'
-        }}>
-          {statusMessage}
-        </div>
-      )}
 
       {/* Header & Filter Controls */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>

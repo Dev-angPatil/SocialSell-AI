@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { 
   Plus, 
   Trash2, 
@@ -21,6 +22,7 @@ import { InstagramIcon, FacebookIcon, LinkedinIcon } from '../components/SocialI
 
 export default function Profile() {
   const { authFetch } = useAuth();
+  const toast = useToast();
   
   // Navigation tab
   const [activeTab, setActiveTab] = useState("brand"); // "brand" or "integrations"
@@ -50,8 +52,6 @@ export default function Profile() {
   // Status states
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-  const [errorMsg, setErrorMsg] = useState("");
 
   useEffect(() => {
     fetchProfile();
@@ -89,11 +89,11 @@ export default function Profile() {
         });
         setProducts(data.products || []);
       } else {
-        setErrorMsg("Failed to load profile details.");
+        toast.error("Error", "Failed to load profile details.");
       }
     } catch (err) {
       console.error(err);
-      setErrorMsg("Network error loading profile.");
+      toast.error("Error", "Network error loading profile.");
     } finally {
       setLoading(false);
     }
@@ -127,8 +127,6 @@ export default function Profile() {
   const handleSaveProfile = async (e) => {
     e.preventDefault();
     setSaving(true);
-    setMessage("");
-    setErrorMsg("");
 
     try {
       const res = await authFetch('/api/profile', {
@@ -137,14 +135,14 @@ export default function Profile() {
       });
       const data = await res.json();
       if (res.ok) {
-        setMessage("✅ Brand Profile saved successfully!");
+        toast.success("Success", "Brand Profile saved successfully!");
         setProfile(prev => ({ ...prev, ...data.profile }));
       } else {
-        setErrorMsg(data.error || "Failed to update profile.");
+        toast.error("Error", data.error || "Failed to update profile.");
       }
     } catch (err) {
       console.error(err);
-      setErrorMsg("Network error saving profile.");
+      toast.error("Error", "Network error saving profile.");
     } finally {
       setSaving(false);
     }
@@ -164,12 +162,13 @@ export default function Profile() {
       if (res.ok) {
         setProducts(prev => [...prev, data.product]);
         setNewProduct({ name: "", price: "", description: "" });
+        toast.success("Success", "Product added to catalog.");
       } else {
-        setErrorMsg(data.error || "Failed to add product.");
+        toast.error("Error", data.error || "Failed to add product.");
       }
     } catch (err) {
       console.error(err);
-      setErrorMsg("Network error adding product.");
+      toast.error("Error", "Network error adding product.");
     }
   };
 
@@ -180,13 +179,14 @@ export default function Profile() {
       });
       if (res.ok) {
         setProducts(prev => prev.filter(p => p.id !== id));
+        toast.success("Success", "Product removed from catalog.");
       } else {
         const data = await res.json();
-        setErrorMsg(data.error || "Failed to delete product.");
+        toast.error("Error", data.error || "Failed to delete product.");
       }
     } catch (err) {
       console.error(err);
-      setErrorMsg("Network error deleting product.");
+      toast.error("Error", "Network error deleting product.");
     }
   };
 
@@ -223,11 +223,11 @@ export default function Profile() {
       });
       if (res.ok) {
         setIntegrations(prev => prev.filter(i => i.id !== integrationId));
-        setMessage("Disconnected successfully.");
+        toast.success("Disconnected", "Account disconnected successfully.");
       }
     } catch (err) {
       console.error(err);
-      setErrorMsg("Failed to disconnect platform.");
+      toast.error("Error", "Failed to disconnect platform.");
     }
   };
 
@@ -645,34 +645,8 @@ export default function Profile() {
 
           </div>
 
-          {/* Global Save and messages */}
+          {/* Global Save */}
           <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {message && (
-              <div style={{
-                background: 'rgba(52, 211, 153, 0.1)',
-                border: '1px solid rgba(52, 211, 153, 0.2)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '0.75rem',
-                color: '#34d399',
-                fontWeight: 600
-              }}>
-                {message}
-              </div>
-            )}
-
-            {errorMsg && (
-              <div style={{
-                background: 'rgba(248, 113, 113, 0.1)',
-                border: '1px solid rgba(248, 113, 113, 0.2)',
-                borderRadius: 'var(--radius-sm)',
-                padding: '0.75rem',
-                color: '#f87171',
-                fontWeight: 600
-              }}>
-                <AlertCircle style={{ width: 16, height: 16, display: 'inline', marginRight: '0.5rem' }} />
-                {errorMsg}
-              </div>
-            )}
 
             <button 
               type="submit" 

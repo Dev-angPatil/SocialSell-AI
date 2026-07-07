@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import { 
   TrendingUp, 
   Users, 
@@ -26,18 +28,24 @@ import {
 } from 'recharts';
 
 export default function Dashboard() {
+  const { authFetch } = useAuth();
+  const toast = useToast();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch('/api/analytics/dashboard')
-      .then(res => res.json())
+    authFetch('/api/analytics/dashboard')
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to load dashboard data.");
+        return res.json();
+      })
       .then(resData => {
         setData(resData);
         setLoading(false);
       })
       .catch(err => {
         console.error("Error fetching dashboard data:", err);
+        toast.error("Error", "Could not load dashboard analytics.");
         setLoading(false);
       });
   }, []);

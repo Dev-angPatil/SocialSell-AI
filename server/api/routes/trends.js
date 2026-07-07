@@ -1,5 +1,9 @@
 const express = require('express');
 const router = express.Router();
+const { requireAuth } = require('../../middleware/auth');
+
+// Protect all trends routes
+router.use(requireAuth);
 
 // Mock trends database
 const mockTrends = [
